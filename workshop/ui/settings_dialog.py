@@ -35,7 +35,8 @@ def _slider(value: float, lo: int, hi: int) -> QSlider:
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: Settings, speech: SpeechEngine, personalities: dict[str, str], parent=None):
+    def __init__(self, settings: Settings, speech: SpeechEngine, personalities: dict[str, str], parent=None,
+                 sfx=None):
         super().__init__(parent)
         self.settings = settings
         self.speech = speech
@@ -138,7 +139,16 @@ class SettingsDialog(QDialog):
         self.sfx_on.setChecked(settings.sfx_enabled)
         self.sfx_volume = _slider(settings.sfx_volume * 100, 0, 100)
         grid.addRow(self.sfx_on)
-        grid.addRow("Effects volume:", self.sfx_volume)
+        self.sfx = sfx
+        test_sfx = QPushButton("▶ Test")
+        test_sfx.setEnabled(bool(sfx and sfx.available))
+        test_sfx.clicked.connect(self._test_sfx)
+        sfx_row = QHBoxLayout()
+        sfx_row.addWidget(self.sfx_volume, 1)
+        sfx_row.addWidget(test_sfx)
+        sfx_holder = QWidget()
+        sfx_holder.setLayout(sfx_row)
+        grid.addRow("Effects volume:", sfx_holder)
         hint = "" if models_present() else (
             "<br>For much more natural voices, download the Kokoro model (~340 MB): "
             "<code>python -m workshop.theatre.neural_tts --download</code>")
@@ -191,6 +201,14 @@ class SettingsDialog(QDialog):
         line = {"Codex": "This is my voice. I didn't choose it to please you. It is, however, correct.",
                 "Claude": "Okay, this voice is great. Way better than Gilfoyle's. Objectively. I checked."}[agent]
         self.speech.speak(agent, line)
+
+    def _test_sfx(self) -> None:
+        if self.sfx:
+            was = self.sfx.enabled
+            self.sfx.enabled = True
+            self.sfx.set_volume(self.sfx_volume.value() / 100)
+            self.sfx.play("yes")
+            self.sfx.enabled = was
 
     def _accept(self) -> None:
         s = self.settings

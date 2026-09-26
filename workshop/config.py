@@ -11,7 +11,7 @@ from .agents.claude import DEFAULT_CLAUDE_ARGS
 from .agents.codex import DEFAULT_CODEX_ARGS
 from .theatre.avatar_state import DEFAULT_PERSONAS, Persona
 
-THEME_VERSION = 1  # bump when the cast/theme defaults change
+THEME_VERSION = 2  # bump when the cast/theme defaults change
 
 APP_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = APP_DIR / "config"
@@ -46,7 +46,7 @@ class Settings:
     speech_rate: float = 0.1
     speech_volume: float = 0.85
     sfx_enabled: bool = True
-    sfx_volume: float = 0.45
+    sfx_volume: float = 0.8
     # Silicon Valley cast (Codex = Gilfoyle, Claude = Dinesh)
     cast_enabled: bool = True
     hostility: str = "Gilfoyle & Dinesh"
@@ -70,14 +70,18 @@ class Settings:
         """Older settings predate the cast: move them onto Gilfoyle & Dinesh once (voices included)."""
         if self.theme_version >= THEME_VERSION:
             return
-        from .theatre.cast import PERSONALITY
+        if self.theme_version < 1:
+            from .theatre.cast import PERSONALITY
 
-        self.last_preset = "Gilfoyle & Dinesh"
-        self.codex_personality = PERSONALITY["Codex"]
-        self.claude_personality = PERSONALITY["Claude"]
-        self.codex_voice = self.claude_voice = ""
-        self.speech_rate = 0.0
-        self.cast_enabled = True
+            self.last_preset = "Gilfoyle & Dinesh"
+            self.codex_personality = PERSONALITY["Codex"]
+            self.claude_personality = PERSONALITY["Claude"]
+            self.codex_voice = self.claude_voice = ""
+            self.speech_rate = 0.0
+            self.cast_enabled = True
+        if self.theme_version < 2:
+            # effects are now normalised; the old default volume made them inaudible under the voices
+            self.sfx_volume = max(self.sfx_volume, 0.8)
         self.theme_version = THEME_VERSION
 
     def save(self, path: Path = SETTINGS_PATH) -> None:

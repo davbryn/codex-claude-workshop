@@ -48,24 +48,55 @@ def voice_label(voice_id: str) -> str:
     return voice_id
 
 
-def split_for_streaming(text: str, first_max: int = 55) -> list[str]:
-    """Sentence chunks; the first chunk is kept short so audio starts quickly."""
-    parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", text) if p.strip()]
-    if not parts:
-        return []
-    first = parts[0]
-    if len(first) > first_max:
-        m = re.search(r"[,;:]\s", first[20:])
-        if m and len(first) - (20 + m.end()) >= 15:
-            cut = 20 + m.end()
-            parts = [first[:cut].strip(), first[cut:].strip(), *parts[1:]]
-    merged: list[str] = []
-    for part in parts:
-        if merged and len(merged[-1]) < 30 and len(merged) > 1:
-            merged[-1] = f"{merged[-1]} {part}"
-        else:
-            merged.append(part)
-    return merged
+_PHRASE = re.compile(r"(?<=\s)(?:with|because|which|that|when|while|so|but|and|for|to|into|from|if|unless|"
+                     r"until|since|than|after|before|instead)\b", re.I)
+
+
+def _cut(text: str, limit: int) -> int:
+    """Where to break ``text`` so the head is at most ~limit chars: a pause if possible, else a space."""
+    best = -1
+    for m in re.finditer(r"[,;:—]\s", text):
+        if 10 <= m.end() <= limit:
+            best = m.end()
+    if best > 0 and len(text) - best >= 12:
+        return best
+    # next best: a phrase boundary, i.e. just before "with", "because", "that", …
+    for m in reversed(list(_PHRASE.finditer(text))):
+        if 12 <= m.start() <= limit and len(text) - m.start() >= 12:
+            return m.start()
+    if len(text) <= 72:  # breaking mid-phrase costs intonation; only do it for long runs
+        return -1
+    space = text.rfind(" ", 0, limit)
+    return space if space > 10 and len(text) - space >= 12 else -1
+
+
+def split_for_streaming(text: str, first_max: int = 30, growth: float = 1.7) -> list[str]:
+    """Chunks for streaming synthesis.
+
+    Synthesis runs at roughly real time on a CPU, so the first chunk is short
+    (audio starts quickly) and each later chunk may only be a little longer than
+    the one before it, so it is ready before the previous one finishes playing.
+    Chunks break at sentence ends, then pauses, then spaces.
+    """
+    sentences = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", text) if p.strip()]
+    chunks: list[str] = []
+    queue = list(sentences)
+    while queue:
+        part = queue.pop(0)
+        # each chunk may only be a bit longer than the one that plays while it is synthesised
+        limit = first_max if len(chunks) < 1 else min(260.0, max(first_max, len(chunks[-1])) * growth)
+        if len(chunks) > 1 and len(chunks[-1]) < 16:
+            before = min(260.0, max(first_max, len(chunks[-2])) * growth)
+            if len(chunks[-1]) + 1 + len(part) <= before:
+                chunks[-1] = f"{chunks[-1]} {part}"  # don't leave a tiny fragment on its own
+                continue
+        if len(part) > limit:
+            cut = _cut(part, int(limit))
+            if cut > 0:
+                queue.insert(0, part[cut:].strip())
+                part = part[:cut].strip()
+        chunks.append(part)
+    return chunks
 
 
 class KokoroSpeechEngine(SpeechEngine):
@@ -106,6 +137,7 @@ class KokoroSpeechEngine(SpeechEngine):
         self._synth_done = True
         self._started = False
         self._level = 0.0
+        self.tap = None  # optional callable(pcm_bytes, sample_rate, volume) for everything sent to the speakers
         self._pump = QTimer(self)
         self._pump.setInterval(15)
         self._pump.timeout.connect(self._on_pump)
@@ -258,7 +290,10 @@ class KokoroSpeechEngine(SpeechEngine):
             free = self._sink.bytesFree()
             if free > 0 and self._pending:
                 n = min(free, len(self._pending)) & ~1
-                self._io.write(bytes(self._pending[:n]))
+                block = bytes(self._pending[:n])
+                self._io.write(block)
+                if self.tap is not None:  # e.g. the demo video recorder
+                    self.tap(block, SAMPLE_RATE, self._volume)
                 del self._pending[:n]
                 if not self._started:
                     self._started = True

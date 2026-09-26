@@ -266,6 +266,10 @@ class StageWidget(QWidget):
                 if b.mode == "typewriter" and self.typewriter and self.animations:
                     b.shown = min(len(b.text), b.shown + dt * self.typewriter_cps)
                 elif b.mode == "speech" and self.typewriter and self.animations:
+                    if b.speech_chars == 0 and not self.models[agent].talking:
+                        if t - b.born > 4.0:  # the voice never arrived: fall back to typing
+                            b.mode = "typewriter"
+                        continue  # still drawing breath: the bubble shows "…"
                     lead = len(b.text) * (b.speech_chars / max(1, len(b.text)))
                     b.shown = max(b.shown, min(len(b.text), lead + 6))
                 else:
@@ -1026,7 +1030,8 @@ class StageWidget(QWidget):
         room = (w / 2 - 10) - (anchor.x() + gap) if left else (anchor.x() - gap) - (w / 2 + 10)
         max_w = max(160.0, min(w * 0.3, 430.0 if speech else 300.0, room + head.width() * 0.25))
         pad_x, pad_y = (15.0, 11.0) if speech else (11.0, 7.0)
-        text = b.text
+        waiting = speech and b.mode == "speech" and b.shown < 1 and not self.models[agent].talking
+        text = "…" if waiting else b.text
         sizes = (15.5, 14.5, 13.5, 12.5, 11.5) if speech else (12.0,)
         top_limit = 34.0
         available = max(40.0, anchor.y() - head.height() * 0.05 - top_limit)
@@ -1083,7 +1088,7 @@ class StageWidget(QWidget):
             p.drawPath(path)
             p.setPen(_c("#b9b1a3"))
         p.setFont(font)
-        shown = text if b.shown >= len(text) else text[: int(b.shown)]
+        shown = ("." * (1 + int(t * 3) % 3)) if waiting else (text if b.shown >= len(text) else text[: int(b.shown)])
         option = QTextOption()
         option.setWrapMode(QTextOption.WrapMode.WordWrap)
         text_rect = QRectF(rect.left() + pad_x, rect.top() + pad_y, text_w, text_h)

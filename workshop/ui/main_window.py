@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         o = self.orchestrator
-        dialog = SettingsDialog(self.settings, self.speech, o.personalities, self)
+        dialog = SettingsDialog(self.settings, self.speech, o.personalities, self, sfx=self.sfx)
         if not dialog.exec():
             return
         s = self.settings

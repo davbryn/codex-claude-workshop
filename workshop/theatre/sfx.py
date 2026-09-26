@@ -20,7 +20,7 @@ from .speech import audio_disabled
 
 RATE = 22050
 CACHE_DIR = CONFIG_DIR / "cache" / "sfx"
-VERSION = 3  # bump to regenerate cached files
+VERSION = 4  # bump to regenerate cached files
 
 
 def _note(freq: float, seconds: float, *, wave_shape: str = "sine", attack=0.005, decay=None, gain=1.0,
@@ -130,12 +130,50 @@ def _effects() -> dict[str, list[float]]:
         "wahwah": _wahwah(),
         "oops": _mix((0, _note(520, 0.16, wave_shape="triangle", gain=0.35, slide_to=440)),
                      (0.14, _note(440, 0.3, wave_shape="triangle", gain=0.35, slide_to=330))),
+        # working sounds, so a busy agent is audible rather than silent
+        "keys1": _keys(1), "keys2": _keys(2), "keys3": _keys(3),
+        "tick": _mix((0, _note(1900, 0.03, gain=0.6, decay=0.02)), (0.05, _note(1400, 0.03, gain=0.4, decay=0.02))),
+        "whir": _whir(),
     }
 
 
-def _write_wav(path: Path, samples: list[float]) -> None:
+# Peak level per effect after normalisation (everything else is normalised to full scale).
+LEVELS = {"keys1": 0.55, "keys2": 0.55, "keys3": 0.55, "tick": 0.35, "whir": 0.45, "pop": 0.7, "handoff": 0.75}
+
+
+def _keys(seed: int) -> list[float]:
+    """A short burst of mechanical keyboard clatter (clicky, not a laptop)."""
+    rng = random.Random(seed * 101)
+    t = 0.0
+    parts = []
+    for _ in range(rng.randint(5, 8)):
+        n = int(RATE * 0.018)
+        tone = rng.uniform(2600, 4200)
+        click = [((rng.random() * 2 - 1) * 0.7 + 0.5 * math.sin(2 * math.pi * tone * i / RATE)) * math.exp(-i / n * 5)
+                 for i in range(n)]
+        thock = _note(rng.uniform(170, 240), 0.03, gain=0.5, decay=0.02)
+        parts += [(t, click), (t + 0.004, thock)]
+        t += rng.uniform(0.055, 0.12)
+    return _mix(*parts)
+
+
+def _whir() -> list[float]:
+    """A fan spinning up: tests are running."""
+    n = int(RATE * 0.7)
+    rng = random.Random(9)
+    out, phase, smooth = [], 0.0, 0.0
+    for i in range(n):
+        u = i / n
+        phase += 2 * math.pi * (90 + 160 * u) / RATE
+        smooth += ((rng.random() * 2 - 1) - smooth) * 0.08
+        env = min(1.0, u * 4) * (1 - u) ** 0.6
+        out.append((0.6 * math.sin(phase) + 0.5 * smooth) * env)
+    return out
+
+
+def _write_wav(path: Path, samples: list[float], level: float = 0.9) -> None:
     peak = max(1e-6, max(abs(s) for s in samples))
-    scale = 0.9 / peak if peak > 0.9 else 1.0
+    scale = level / peak  # normalise: the synthesised tones were far quieter than the voices
     frames = b"".join(struct.pack("<h", int(max(-1, min(1, s * scale)) * 32000)) for s in samples)
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
@@ -150,13 +188,14 @@ def ensure_effects(directory: Path = CACHE_DIR) -> dict[str, Path]:
     paths = {name: directory / f"{name}.wav" for name in _effects_names()}
     if not marker.exists() or not all(p.exists() for p in paths.values()):
         for name, samples in _effects().items():
-            _write_wav(paths[name], samples)
+            _write_wav(paths[name], samples, LEVELS.get(name, 0.9))
         marker.write_text("ok")
     return paths
 
 
 def _effects_names() -> list[str]:
-    return ["handoff", "chime", "buzz", "zap", "alert", "fanfare", "human", "pop", "oops", "yes", "blast", "wahwah"]
+    return ["handoff", "chime", "buzz", "zap", "alert", "fanfare", "human", "pop", "oops", "yes", "blast", "wahwah",
+            "keys1", "keys2", "keys3", "tick", "whir"]
 
 
 class SoundEffects(QObject):
@@ -190,5 +229,7 @@ class SoundEffects(QObject):
             effect.setVolume(volume)
 
     def play(self, name: str) -> None:
+        if name == "keys":  # a few variants so typing doesn't sound like a loop
+            name = f"keys{random.randint(1, 3)}"
         if self.enabled and name in self._effects:
             self._effects[name].play()

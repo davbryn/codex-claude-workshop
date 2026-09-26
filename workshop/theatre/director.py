@@ -8,6 +8,7 @@ which uses the ordinary Human Turn API).
 
 from __future__ import annotations
 
+import random
 import re
 import time
 from collections import deque
@@ -58,6 +59,8 @@ class Performance:
     speech: str | None
     reaction: EntryReaction | None
     quick: bool = False
+    spoken: bool = False  # the speech engine accepted the line
+    delivered: bool = False  # the bubble is up
 
 
 class Director(QObject):
@@ -110,6 +113,11 @@ class Director(QObject):
         self._ambient = QTimer(self)
         self._ambient.timeout.connect(self._ambient_tick)
         self._ambient.start(2000)
+        # while someone is coding, the keyboard is audible now and then
+        self._typing = QTimer(self)
+        self._typing.timeout.connect(self._typing_tick)
+        self._typing.start(1700)
+        self._typing_rng = random.Random(5)
         self._demo_timer = QTimer(self)
         self._demo_timer.timeout.connect(self._demo_tick)
 
@@ -148,7 +156,7 @@ class Director(QObject):
         return self.speech_enabled and not self.muted and self.speech.available()
 
     def shutdown(self) -> None:
-        for timer in (self._end_timer, self._gap_timer, self._ambient, self._demo_timer):
+        for timer in (self._end_timer, self._gap_timer, self._ambient, self._demo_timer, self._typing):
             timer.stop()
         self.speech.stop()
         self.stage.stop()
@@ -262,6 +270,12 @@ class Director(QObject):
             m.look_at_other(2.0)
             preroll = 900
         self.stage.set_status(agent, self.orch_state[agent], status_label(agent, "speaking"))
+        # Start synthesising the voice now, so the beat above hides its start-up latency.
+        # The mouth only starts moving once audio is actually playing.
+        self._voice_live = False
+        perf.spoken = bool(perf.speech) and self.speaking_allowed() and self.speech.speak(agent, perf.speech)
+        if perf.spoken:
+            self._end_timer.start(int((len(perf.speech) / 9 + 8) * 1000))  # safety net
         if preroll:
             QTimer.singleShot(preroll, lambda perf=perf: self._deliver(perf))
         else:
@@ -274,9 +288,10 @@ class Director(QObject):
         agent, other = perf.turn.speaker, other_agent(perf.turn.speaker)
         m, om = self.stage.models[agent], self.stage.models[other]
         r = perf.reaction
-        speak = bool(perf.speech) and self.speaking_allowed()
-        self.stage.show_speech(agent, perf.bubble, mode="speech" if speak else "typewriter")
-        m.set_talking(True)
+        perf.delivered = True
+        self.stage.show_speech(agent, perf.bubble, mode="speech" if perf.spoken else "typewriter")
+        if not perf.spoken or self._voice_live:
+            m.set_talking(True)  # otherwise _on_speech_started opens the mouth when the audio begins
         if r and r.mentions_other:
             m.look_at_other(2.0)
         primary = r.primary_state() if r else "idle"
@@ -288,9 +303,7 @@ class Director(QObject):
             if listener:
                 om.react(listener)
         self._effects_at_start(agent, other, r)
-        if speak and self.speech.speak(agent, perf.speech):
-            self._end_timer.start(int((len(perf.speech) / 9 + 8) * 1000))  # safety net
-        else:
+        if not perf.spoken:
             seconds = max(2.4, min(7.0, len(perf.bubble) / 17 + 1.4))
             self._end_timer.start(int(seconds * 1000))
 
@@ -369,6 +382,8 @@ class Director(QObject):
     def _on_speech_started(self, agent: str) -> None:
         if self.current and self.current.turn.speaker == agent:
             self._voice_live = True
+            if self.current.delivered:  # the line is on screen: open the mouth with the audio
+                self.stage.models[agent].set_talking(True)
 
     def _on_speech_finished(self, agent: str) -> None:
         self._voice_live = False
@@ -545,6 +560,14 @@ class Director(QObject):
                 m.set_base(self._base_for_kind(agent, cue.kind))
                 self._set_status(agent, cue.activity)
             self._restore_label(agent)
+            # working sounds: you can hear them work (never over someone speaking)
+            if not any(mm.talking for mm in self.stage.models.values()):
+                if cue.kind == "edit":
+                    self._sfx("keys", 0.5)
+                elif cue.kind == "test":
+                    self._sfx("whir", 3.0)
+                elif cue.kind in ("command", "read"):
+                    self._sfx("tick", 0.8)
             if cue.kind == "edit":
                 self.stats_changed.emit()
         if cue.tests_ok:
@@ -663,6 +686,13 @@ class Director(QObject):
         self.stage.update_card_footer("waiting", f"Demo: the human answers automatically in {self._countdown}s "
                                                  "(or use Human Turn)")
         self._countdown -= 1
+
+    def _typing_tick(self) -> None:
+        agent = self.o.current_agent if self.o.is_busy() else None
+        if agent is None or any(m.talking for m in self.stage.models.values()):
+            return
+        if self.stage.models[agent].base == "coding" and self._typing_rng.random() < 0.65:
+            self._sfx("keys", 0.5)
 
     def _ambient_tick(self) -> None:
         now = time.monotonic()
