@@ -21,6 +21,7 @@ python -m workshop.theatre.neural_tts --download   # optional: natural voices (~
 
 python app.py                 # real Codex + Claude Code CLIs
 python app.py --demo          # scripted Workshop Theatre demo: no setup, no usage
+python app.py --demo --record demo.mp4   # render the demo to a video (needs ffmpeg)
 python app.py --fake-agents   # the setup screen, with simulated agents
 ```
 
@@ -152,6 +153,30 @@ skip or reorder one.
 * **Windows system voices** are the fallback. Gilfoyle is pitched lower and slower,
   Dinesh higher and quicker.
 * Neither can imitate the actors. The goal is contrast.
+
+**Their monitors are live.** Each character's monitor is angled toward him and visible
+to you, and it shows what he is actually doing:
+* **Real code changes:** the project folder is snapshotted when a turn starts and
+  rescanned while it runs, so you see real diffs of what changed on disk, typing
+  themselves out.
+* **The terminal:** the commands he runs, with their output.
+* **Files he's reading:** shown straight from disk (only files inside the project).
+* **When idle:** he browses a fictional internet that is mostly unkind about the other
+  one: Stack Underflow, Anton's status page, "is gilfoyle a real name", a gold-chain
+  shop. It's set dressing and never presented as something the agents said.
+
+**Usage limits.** When Claude or Codex runs out of usage mid-turn, the workshop treats
+it as a pause, not a crash. The card shows who is out and when the limit resets
+(Claude reports the exact time). The workshop then resumes automatically a minute
+after the reset. It tries that once; you can always press Resume yourself.
+
+**Turn logs.** Every turn's raw CLI output is saved to
+`<project>/.workshop/logs/`, so a failure can be read after the window is closed.
+
+**Recording.** `python app.py --demo --record demo.mp4` plays the episode in Theatre
+Mode and saves an MP4. The soundtrack is rebuilt from the app's own voice audio and
+sound effects rather than recorded from your speakers. Add `--record-full` to include
+the whole window.
 
 **Theatre Mode** (F11) hides the header, dashboard and diagnostics and gives the stage
 most of the window, which is handy on a second monitor.

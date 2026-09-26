@@ -322,6 +322,8 @@ class OutputCue:
     tests_failed: int | None = None
     tests_ok: bool = False  # a clear, successful test summary
     error: bool = False
+    command: str | None = None  # the command line, as run (for the monitor's terminal)
+    path: str | None = None  # full path argument of a Read/Edit tool call
 
     def __bool__(self) -> bool:
         return any(
@@ -361,10 +363,11 @@ class ActivityTracker:
             if name in _EDIT_TOOLS:
                 file = _basename(arg)
                 self.files_edited.add(file)
-                return OutputCue(activity=f"Editing {file}…", kind="edit", file=file)
+                return OutputCue(activity=f"Editing {file}…", kind="edit", file=file, path=arg.strip())
             if name in _READ_TOOLS:
                 target = _basename(arg) if arg and name == "Read" else None
-                return OutputCue(activity=f"Reading {target}…" if target else "Searching the project…", kind="read")
+                return OutputCue(activity=f"Reading {target}…" if target else "Searching the project…", kind="read",
+                                 path=arg.strip() if name == "Read" else None)
             if name in _SHELL_TOOLS:
                 return self._command(arg)
             if name in ("TodoWrite", "TaskCreate", "TaskUpdate"):
@@ -380,13 +383,13 @@ class ActivityTracker:
         inner = (wrapped.group(1) if wrapped else command).strip().strip("\"'@").strip()
         first = re.split(r"[;&|\n]", inner, maxsplit=1)[0].strip() or inner
         if TEST_CMD_RX.search(inner):
-            return OutputCue(activity="Running tests…", kind="test")
+            return OutputCue(activity="Running tests…", kind="test", command=inner)
         if READ_CMD_RX.match(first):
-            return OutputCue(activity="Reading files…", kind="read")
+            return OutputCue(activity="Reading files…", kind="read", command=inner)
         if re.match(r"^git\b", first):
-            return OutputCue(activity="Checking git…", kind="command")
+            return OutputCue(activity="Checking git…", kind="command", command=inner)
         short = first if len(first) <= 38 else first[:37] + "…"
-        return OutputCue(activity=f"Running {short}", kind="command")
+        return OutputCue(activity=f"Running {short}", kind="command", command=inner)
 
     def _results(self, line: str) -> OutputCue | None:
         text = re.sub(r"^\[tool result\]\s*", "", line)

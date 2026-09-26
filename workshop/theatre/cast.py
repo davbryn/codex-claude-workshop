@@ -84,7 +84,7 @@ def identity_block(agent: str) -> str:
     return (
         f"For the theatrical collaboration layer, you are {me.upper()}.\n"
         f"The other agent, {other_agent}, is {other.upper()}.\n"
-        f"(Your real identity is still {agent}: the heading must stay `## {agent} — Turn N` and the handoff "
+        f"(Your real identity is still {agent}: the heading must stay `## {agent} - Turn N` and the handoff "
         f"must stay the exact line `@{other_agent}`. Refer to the other agent as {other} in your prose.)"
     )
 
@@ -143,14 +143,14 @@ STATUS_LABELS = {
         "coding": "⌨ CODING", "testing": "🧪 RUNNING TESTS", "planning": "📝 PLANNING", "writing": "✍ WRITING UP",
         "waiting": "☕ WAITING. UNIMPRESSED.", "sleeping": "💤 DORMANT", "paused": "⏸ PAUSED",
         "error": "⚠ ERROR (UNBOTHERED)", "complete": "✓ DONE. OBVIOUSLY.", "stopped": "■ STOPPED",
-        "human": "👀 LISTENING. RELUCTANTLY.", "speaking": "💬 SPEAKING",
+        "human": "👀 LISTENING. RELUCTANTLY.", "speaking": "💬 SPEAKING", "limited": "💸 OUT OF USAGE. UNBOTHERED.",
     },
     "Claude": {
         "starting": "⏳ STARTING", "reading": "📖 READING", "reviewing": "🔍 HUNTING GILFOYLE'S BUGS",
         "coding": "⌨ CODING", "testing": "🧪 RUNNING TESTS", "planning": "📝 PLANNING", "writing": "✍ WRITING UP",
         "waiting": "☕ WAITING", "sleeping": "💤 NAPPING", "paused": "⏸ PAUSED",
         "error": "⚠ ERROR (NOT HIS FAULT)", "complete": "✓ DONE!", "stopped": "■ STOPPED",
-        "human": "👀 LISTENING (WORRIED)", "speaking": "💬 SPEAKING",
+        "human": "👀 LISTENING (WORRIED)", "speaking": "💬 SPEAKING", "limited": "💸 OUT OF USAGE (NOT HIS FAULT)",
     },
 }
 

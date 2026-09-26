@@ -26,6 +26,7 @@ from .conversation import (
     read_conversation,
     validate_append,
 )
+from .limits import UsageLimit, detect_usage_limit
 from .project import CONVERSATION_FILE, PROTOCOL_FILE
 from .prompts import build_prompt
 
@@ -37,6 +38,7 @@ PAUSED = "paused"
 WAITING_HUMAN = "waiting_human"
 NEEDS_ATTENTION = "needs_attention"  # error / malformed conversation
 COMPLETE = "complete"
+USAGE_LIMIT = "usage_limit"  # an agent ran out of usage; paused until it resets
 STOPPED = "stopped"
 
 # Per-agent display states
@@ -49,6 +51,7 @@ A_ERROR = "ERROR"
 A_PAUSED = "PAUSED"
 A_COMPLETE = "COMPLETE"
 A_STOPPED = "STOPPED"
+A_LIMITED = "OUT OF USAGE"
 
 
 def other_agent(agent: str) -> str:
@@ -89,6 +92,12 @@ class Orchestrator(QObject):
         self.current_agent: str | None = None
         self.running_process: AgentProcess | None = None
         self.turn_number = 0  # total agent turns launched this session
+        self.usage_limit: UsageLimit | None = None
+        self._auto_resumed = False  # one automatic retry per usage-limit episode
+        self._turn_log: list[str] = []
+        self._limit_timer = QTimer(self)
+        self._limit_timer.setSingleShot(True)
+        self._limit_timer.timeout.connect(self._auto_resume_after_limit)
         self.turn_started_at: float | None = None
         self.last_signal: ControlSignal | None = None
         self.last_error: str = ""
@@ -124,6 +133,7 @@ class Orchestrator(QObject):
         self._advance()
 
     def pause(self) -> None:
+        self._limit_timer.stop()
         self.paused = True
         if self.is_busy():
             self._set_state(PAUSING)
@@ -133,6 +143,8 @@ class Orchestrator(QObject):
             self._mark_idle_agents(A_PAUSED)
 
     def resume(self) -> None:
+        self._limit_timer.stop()
+        self.usage_limit = None
         self.paused = False
         self.stopped = False
         if self.is_busy():
@@ -142,6 +154,7 @@ class Orchestrator(QObject):
 
     def stop(self) -> None:
         self._gate_timer.stop()
+        self._limit_timer.stop()
         self.stopped = True
         self.paused = False
         if self.running_process is not None:
@@ -243,6 +256,7 @@ class Orchestrator(QObject):
             agent, other, self.personalities.get(agent, ""), self.project_dir, self.protocol_file, turn, theatre
         )
         self.current_agent = agent
+        self._turn_log = []
         self._set_agent_state(agent, A_STARTING)
         self._set_agent_state(other, A_WAITING)
         try:
@@ -265,6 +279,8 @@ class Orchestrator(QObject):
         process.start()
 
     def _on_output(self, agent: str, stream: str, line: str) -> None:
+        if len(self._turn_log) < 20000:
+            self._turn_log.append(f"[{stream}] {line}" if stream != "stdout" else line)
         self.agent_output.emit(agent, stream, line)
         if stream == "system" or self.agent_states.get(agent) == A_HANDING_OFF:
             return
@@ -279,12 +295,19 @@ class Orchestrator(QObject):
         self.turn_started_at = None
         process.deleteLater()
         text = self._check_file(force=True)
+        self._write_turn_log(agent, exit_code)
         self.turn_finished.emit(agent, exit_code)
 
         if self.stopped:
             self._set_agent_state(agent, A_STOPPED)
             self.message.emit("warning", f"{agent}'s turn was terminated. Files and conversation were kept.")
             return
+
+        if exit_code != 0 or crashed or text == text_before:
+            limit = detect_usage_limit(agent, self._turn_log + list(process.stderr_tail))
+            if limit is not None:
+                self._usage_limited(limit)
+                return
 
         if exit_code != 0 or crashed:
             self._set_agent_state(agent, A_ERROR)
@@ -312,10 +335,54 @@ class Orchestrator(QObject):
         if detect_disagreement(latest.content):
             self.disagreement.emit(agent)
 
+        self._auto_resumed = False  # a successful turn ends any usage-limit episode
         self._set_agent_state(agent, A_PAUSED if self.paused else A_WAITING)
         self._advance()
 
+    # -- usage limits -----------------------------------------------------------
+
+    def _usage_limited(self, limit: UsageLimit) -> None:
+        """Pause cleanly (not an error) and, once per episode, resume shortly after the reset."""
+        self.usage_limit = limit
+        self.paused = True
+        self._set_agent_state(limit.agent, A_LIMITED)
+        auto = limit.reset_at is not None and not self._auto_resumed
+        if auto:
+            delay = max(5.0, limit.reset_at + 60 - time.time())
+            self._limit_timer.start(int(min(delay, 8 * 86400) * 1000))
+        self._set_state(USAGE_LIMIT)
+        when = f"It resets at {limit.reset_text()}" if limit.reset_at else "The reset time wasn't given"
+        then = ("; the workshop will resume automatically a minute after that." if auto else
+                ". Press Resume when it has reset." if not self._auto_resumed else
+                ". It was still limited after the automatic retry, so press Resume when it has reset.")
+        self.message.emit("warning", f"{limit.agent.upper()} HIT ITS USAGE LIMIT. {when}{then}\n({limit.evidence})")
+
+    def _auto_resume_after_limit(self) -> None:
+        self._limit_timer.stop()
+        if self.state != USAGE_LIMIT or self.is_busy():
+            return
+        self._auto_resumed = True
+        self.message.emit("info", f"Usage should have reset: resuming {self.usage_limit.agent if self.usage_limit else ''}.")
+        self.usage_limit = None
+        self.paused = False
+        self._advance()
+
+    def limit_seconds_left(self) -> float | None:
+        if self.state != USAGE_LIMIT or not self._limit_timer.isActive():
+            return None
+        return self._limit_timer.remainingTime() / 1000.0
+
     # -- helpers ------------------------------------------------------------
+
+    def _write_turn_log(self, agent: str, exit_code: int) -> None:
+        """Keep each turn's raw CLI output next to the project, so failures can be read after the window closes."""
+        try:
+            logs = self.project_dir / ".workshop" / "logs"
+            logs.mkdir(parents=True, exist_ok=True)
+            name = f"{time.strftime('%Y%m%d-%H%M%S')}-{agent.lower()}-exit{exit_code}.log"
+            (logs / name).write_text("\n".join(self._turn_log) + "\n", encoding="utf-8")
+        except OSError:
+            pass
 
     def _save_pre_turn_backup(self, text: str, agent: str) -> Path | None:
         path = self.project_dir / f"conversation.before-{agent.lower()}-{time.strftime('%Y%m%d-%H%M%S')}.bak.md"

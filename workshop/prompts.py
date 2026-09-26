@@ -60,7 +60,7 @@ Take ONE meaningful turn. You may inspect files, edit code, run tests and review
 When finished, append exactly this structure to the END of conversation.md
 (keep all existing content unchanged):
 
-## {me} — Turn {turn}
+## {me} - Turn {turn}
 
 **Thoughts**
 
@@ -86,8 +86,9 @@ The very last non-empty line before the `---` must be the handoff `@{other}` on 
 own (or, only when agreeing with {other}'s `PROPOSE PROJECT COMPLETE`, the line
 `PROJECT COMPLETE` with no handoff). Never hand off to yourself (@{me}), and do not
 mention @{me} or @{other} anywhere else in that final line.
-Write conversation.md as UTF-8 (in Windows PowerShell pass `-Encoding utf8`);
-if your tooling can't write "—", use a plain "-" in the heading instead.
+Use a plain ASCII hyphen in the heading exactly as shown (`## {me} - Turn {turn}`), not an
+em dash: on Windows, non-UTF-8 writes turn it into "?". Write conversation.md as UTF-8
+(in Windows PowerShell 5.1 pass `-Encoding utf8`, or append with Python).
 Then stop — do not start {other}'s turn.
 """
 

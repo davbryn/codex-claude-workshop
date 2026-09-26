@@ -241,4 +241,27 @@ def test_prompt_contains_rules_personality_and_turn(tmp_path):
 
     prompt = build_prompt("Claude", "Codex", "Terrible puns.", tmp_path, "AGENT_README.md", 4)
     assert prompt.index("[CORE WORKSHOP RULES]") < prompt.index("Terrible puns.") < prompt.index("[CURRENT TURN]")
-    assert "## Claude — Turn 4" in prompt and "@Codex" in prompt
+    assert "## Claude - Turn 4" in prompt and "@Codex" in prompt
+
+
+def test_usage_limit_pauses_cleanly_and_resumes_after_reset(qapp, wait, tmp_path):
+    ensure_protocol_file(tmp_path)
+    start_new_conversation(tmp_path, "x", "Claude")
+    adapters = {"Codex": FakeAdapter("Codex", delay=0.01), "Claude": FakeAdapter("Claude", delay=0.01, behavior="limit")}
+    o = Orchestrator(tmp_path, adapters, {}, poll_ms=50)
+    messages = []
+    o.message.connect(lambda level, text: messages.append((level, text)))
+    o.start()
+    assert wait(lambda: o.state == orch.USAGE_LIMIT and not o.is_busy())
+    assert o.usage_limit.agent == "Claude" and o.usage_limit.reset_at is not None
+    assert 3500 < o.limit_seconds_left() < 3700  # resumes a minute after the reset
+    assert any("USAGE LIMIT" in text and "resume automatically" in text for _, text in messages)
+    assert not any(level == "error" for level, _ in messages)  # not treated as a crash
+    logs = list((tmp_path / ".workshop" / "logs").glob("*-claude-exit1.log"))
+    assert logs and "usage limit reached" in logs[0].read_text(encoding="utf-8")
+    # the timer fires: one automatic retry; still limited → stays paused, no second auto-retry
+    o._auto_resume_after_limit()
+    assert wait(lambda: o.state == orch.USAGE_LIMIT and not o.is_busy())
+    assert o.limit_seconds_left() is None
+    assert "still limited" in messages[-1][1]
+    o.stop()

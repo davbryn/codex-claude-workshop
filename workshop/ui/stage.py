@@ -27,6 +27,9 @@ from PySide6.QtGui import (
     QPixmap,
     QRadialGradient,
     QTextOption,
+    QImage,
+    QPolygonF,
+    QTransform,
 )
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -34,6 +37,7 @@ from ..conversation import AGENTS
 from ..theatre.avatar_state import AvatarModel, Persona
 from ..theatre.cast import ACCENT, CHARACTER
 from .avatar_paint import paint_avatar
+from .screen_paint import render_screen
 
 FRAME_ACTIVE_MS = 50
 FRAME_IDLE_MS = 110
@@ -195,6 +199,8 @@ class StageWidget(QWidget):
         self.motes = [(self.rng.random(), self.rng.random(), self.rng.uniform(0.6, 1.6), self.rng.random())
                       for _ in range(22)]
         self._code_lines = {a: self._fake_code_widths(a) for a in AGENTS}
+        self.screens: dict = {}  # agent -> ScreenFeed (set by the Director)
+        self._screen_cache: dict = {}
 
     # -- time / animation settings -------------------------------------------
 
@@ -242,6 +248,7 @@ class StageWidget(QWidget):
             or t - max((b.born for b in self.bubbles.values()), default=-9) < 0.4
             or abs(self.cam_zoom - 1.0) > 0.002 or abs(self.cam_x) > 0.5 or t < self.sweep_until
             or t - self.shake_at < 0.7
+            or any(f.mode == "editor" and f.revealed < len(f.lines) for f in self.screens.values())
         )
 
     def _tick(self) -> None:
@@ -274,6 +281,10 @@ class StageWidget(QWidget):
                     b.shown = max(b.shown, min(len(b.text), lead + 6))
                 else:
                     b.shown = len(b.text)
+        # new code on the monitors types itself out line by line
+        for feed in self.screens.values():
+            if feed.mode == "editor" and feed.revealed < len(feed.lines):
+                feed.revealed = min(float(len(feed.lines)), feed.revealed + dt * (22 if self.animations else 1e6))
         for a in AGENTS:
             target = self._spot_target(a)
             self.spot[a] += (target - self.spot[a]) * min(1.0, dt * 4)
@@ -432,7 +443,36 @@ class StageWidget(QWidget):
         centres = {"Codex": w * 0.26, "Claude": w * 0.74}
         rects = {a: QRectF(centres[a] - size / 2, desk_top + size * 0.105 - size, size, size) for a in AGENTS}
         self._geom = rects
-        return {"w": w, "h": h, "floor": desk_top, "desk": desk_top, "size": size, "cx": centres, "rects": rects}
+        monitors = {a: self._monitor_geometry(centres[a], size, desk_top, h, -1 if a == "Codex" else 1) for a in AGENTS}
+        return {"w": w, "h": h, "floor": desk_top, "desk": desk_top, "size": size, "cx": centres, "rects": rects,
+                "monitors": monitors}
+
+    @staticmethod
+    def _monitor_geometry(cx: float, size: float, desk: float, h: float, side: int):
+        """(screen quad, bezel quad, stand) for a monitor beside a character, turned slightly toward him.
+        Quads run top-left, top-right, bottom-right, bottom-left in image orientation."""
+        mw = size * 0.53
+        mh = mw * 0.66
+        near_x = cx + side * size * 0.285
+        outer_x = near_x + side * mw * 0.93
+        bottom = desk - h * 0.012 - size * 0.075
+        top = bottom - mh
+        d = mh * 0.07  # the far edge is a little smaller: perspective
+        near_top, near_bottom = QPointF(near_x, top), QPointF(near_x, bottom)
+        far_top, far_bottom = QPointF(outer_x, top + d), QPointF(outer_x, bottom - d)
+        if side < 0:
+            screen = QPolygonF([far_top, near_top, near_bottom, far_bottom])
+        else:
+            screen = QPolygonF([near_top, far_top, far_bottom, near_bottom])
+        centre = screen.boundingRect().center()
+        grow = 1 + 11 / mw
+        bezel = QPolygonF([centre + (screen.at(i) - centre) * grow for i in range(4)])
+        mid_x = (near_x + outer_x) / 2
+        neck = size * 0.035
+        stand = QPolygonF([QPointF(mid_x - neck, bottom), QPointF(mid_x + neck, bottom),
+                           QPointF(mid_x + neck * 0.8, desk), QPointF(mid_x + neck * 3, desk + 2),
+                           QPointF(mid_x - neck * 3, desk + 2), QPointF(mid_x - neck * 0.8, desk)])
+        return screen, bezel, stand
 
     def _head_anchor(self, agent: str, L: dict | None = None) -> QPointF:
         r = (L["rects"] if L else self._geom).get(agent)
@@ -779,30 +819,24 @@ class StageWidget(QWidget):
         p.drawRoundedRect(can, 2, 2)
         p.setPen(_pen("#c0392b", 2))
         p.drawLine(QPointF(can.left() + 2, can.center().y()), QPointF(can.right() - 2, can.center().y() - 4))
-        # each character's own monitor, on the outer side, angled toward him
-        self._monitors = {}
-        for agent in AGENTS:
-            r = L["rects"][agent]
-            side = -1 if agent == "Codex" else 1
-            mw, mh = r.width() * 0.34, r.height() * 0.3
-            x = r.center().x() + side * r.width() * 0.42
-            mon = QRectF(x - mw / 2, desk - mh - h * 0.02, mw, mh)
-            # stand
+        # each character's own monitor: on his outer side, turned a little toward him, screen visible to us
+        for agent, (screen, bezel, stand) in L["monitors"].items():
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#0c0c0e"))
-            p.drawRect(QRectF(mon.center().x() - 4, mon.bottom(), 8, h * 0.02))
-            p.drawRoundedRect(QRectF(mon.center().x() - mw * 0.18, desk - h * 0.008, mw * 0.36, h * 0.01), 2, 2)
-            # we see it at an angle: a trapezoid, with the screen facing the character
-            near, far = (mon.right(), mon.left()) if side < 0 else (mon.left(), mon.right())
-            body = QPainterPath(QPointF(far, mon.top() + mh * 0.08))
-            body.lineTo(near, mon.top())
-            body.lineTo(near, mon.bottom())
-            body.lineTo(far, mon.bottom() - mh * 0.08)
-            body.closeSubpath()
+            p.drawPolygon(stand)
             p.setPen(_pen("#000000", 1.4))
-            p.setBrush(QColor("#0b0c0f"))
-            p.drawPath(body)
-            self._monitors[agent] = (mon, side)
+            g = QLinearGradient(bezel.boundingRect().topLeft(), bezel.boundingRect().bottomRight())
+            g.setColorAt(0, QColor("#24262b"))
+            g.setColorAt(1, QColor("#0d0e11"))
+            p.setBrush(g)
+            p.drawPolygon(bezel)
+            p.setBrush(QColor("#030405"))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawPolygon(screen)
+            # a tiny power LED
+            led = bezel.at(3) + (bezel.at(2) - bezel.at(3)) * 0.5 + QPointF(0, -4)
+            p.setBrush(QColor("#39d98a"))
+            p.drawEllipse(led, 1.6, 1.6)
 
     # -- live parts of the set ------------------------------------------------------
 
@@ -821,24 +855,47 @@ class StageWidget(QWidget):
                 p.setBrush(_c(colour, 0.95 if on else 0.15))
                 p.drawEllipse(QPointF(x + k * self._rack.width() * 0.07, y), 1.6, 1.6)
 
+    def _screen_image(self, agent: str, t: float) -> QImage:
+        feed = self.screens.get(agent)
+        active = agent == self.active_agent or (feed is not None and feed.mode == "idle")
+        tick = int(t * 2.5)
+        key = (id(feed), feed.version if feed else 0, int(feed.revealed) if feed else 0, tick, active,
+               feed.mode if feed else "")
+        cached = self._screen_cache.get(agent)
+        if cached and cached[0] == key:
+            return cached[1]
+        image = render_screen(feed, agent, t, active)
+        self._screen_cache[agent] = (key, image)
+        return image
+
     def _paint_monitors(self, p: QPainter, L: dict, t: float) -> None:
-        for agent, (mon, side) in getattr(self, "_monitors", {}).items():
-            active = agent == self.active_agent
-            colour = SCREEN[agent]
-            glow = 0.9 if active else 0.45
-            near = mon.right() if side < 0 else mon.left()
-            # the lit edge of the screen we can just see
-            edge = QRectF(near - (4 if side < 0 else 0), mon.top() + 3, 4, mon.height() - 6)
+        for agent, (screen, bezel, stand) in L["monitors"].items():
+            image = self._screen_image(agent, t)
+            p.save()
+            transform = QTransform()
+            if QTransform.quadToQuad(QPolygonF(QRectF(0, 0, image.width(), image.height())), screen, transform):
+                p.setTransform(transform, True)
+                p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                p.drawImage(0, 0, image)
+            p.restore()
+            # glass sheen
+            sheen = QLinearGradient(screen.at(0), screen.at(2))
+            sheen.setColorAt(0, _c("#ffffff", 0.07))
+            sheen.setColorAt(0.4, _c("#ffffff", 0.0))
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(_c(colour, 0.55 * glow))
-            p.drawRect(edge)
-            # screen light spilling toward the character
+            p.setBrush(sheen)
+            p.drawPolygon(screen)
+            # screen light spilling onto the character
+            feed = self.screens.get(agent)
+            glow = 0.9 if agent == self.active_agent else 0.35
+            colour = "#dfe6f2" if (feed and feed.mode == "idle") else SCREEN[agent]
             r = L["rects"][agent]
-            spill = QRadialGradient(QPointF(near, mon.center().y()), r.width() * 0.45)
-            spill.setColorAt(0, _c(colour, 0.14 * glow))
+            near = screen.at(1) if agent == "Codex" else screen.at(0)
+            spill = QRadialGradient(QPointF(near.x(), near.y() + r.height() * 0.1), r.width() * 0.5)
+            spill.setColorAt(0, _c(colour, 0.12 * glow))
             spill.setColorAt(1, _c(colour, 0.0))
             p.setBrush(spill)
-            p.drawEllipse(QPointF(near, mon.center().y()), r.width() * 0.45, r.width() * 0.4)
+            p.drawEllipse(QPointF(near.x(), near.y() + r.height() * 0.1), r.width() * 0.5, r.width() * 0.42)
         # the back monitors scroll while someone works
         if self.active_agent:
             for i, mon in enumerate(getattr(self, "_back_monitors", [])):

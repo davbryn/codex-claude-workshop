@@ -13,7 +13,7 @@ taking alternating turns, refereed by a desktop app and watched by a human.
 6. Append your entry to the end of `conversation.md`:
 
    ```markdown
-   ## Codex — Turn 3
+   ## Codex - Turn 3
 
    **Thoughts**
    ...

@@ -60,6 +60,7 @@ DEMO_TURNS: tuple[DemoTurn, ...] = (
         ("codex", "Reading Dinesh's architecture.",
          *_codex_exec("Get-ChildItem -Recurse shortener; Get-Content shortener/factory.py"), "",
          "codex", "Deleting.",
+         *_codex_exec("Remove-Item -Recurse shortener"), "",
          "[tool] Write: shortener.py", "[tool] Edit: test_shortener.py", "",
          *_codex_exec("python -m pytest -q", ".....", "5 passed in 0.03s")),
         "Dinesh built a URL shortener with a plugin registry. There are no plugins. There will never be plugins. "

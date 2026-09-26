@@ -16,11 +16,13 @@ Behaviours:
   replace         overwrite the whole file with just a new turn
   junk-append     append text without an entry heading
   double-append   append its own entry plus one pretending to be the other agent
+  limit           print a usage-limit error and exit 1 (like a real CLI out of usage)
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -57,20 +59,45 @@ def say(text: str, delay: float) -> None:
     time.sleep(delay)
 
 
+def _apply_demo_file(root: Path, path: str, content: str | None) -> None:
+    """Write (or delete) a demo source file so the monitors have real diffs to show."""
+    target = root / path
+    if content is None:
+        target.unlink(missing_ok=True)
+        try:
+            target.parent.rmdir()  # tidy an emptied package folder
+        except OSError:
+            pass
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
 def run_demo_turn(me: str, turns, conversation: Path, step: float) -> bool:
     """Play the scripted demo turn for this point in the story, if it is ours."""
+    from workshop.agents.demo_files import DEMO_FILES
     from workshop.agents.demo_script import DEMO_TURNS, demo_entry
 
     index = sum(1 for t in turns if t.speaker in AGENTS)
     if index >= len(DEMO_TURNS) or DEMO_TURNS[index].agent != me:
         return False  # the human rerouted the story; fall back to generic behaviour
     script = DEMO_TURNS[index]
+    root = conversation.parent
+    pending = {path: content for (turn, path), content in DEMO_FILES.items() if turn == index}
     for line in script.steps:
         if line:
             print(line, flush=True)
+            target = re.match(r"\[tool\] (?:Write|Edit): (.+)$", line)
+            if target and target.group(1) in pending:
+                _apply_demo_file(root, target.group(1), pending.pop(target.group(1)))
+            elif "Remove-Item" in line:
+                for path in [p for p, c in pending.items() if c is None]:
+                    _apply_demo_file(root, path, pending.pop(path))
             time.sleep(step * 0.55)
         else:
             time.sleep(step)
+    for path, content in pending.items():  # anything the script didn't name explicitly
+        _apply_demo_file(root, path, content)
     number = sum(1 for t in turns if t.speaker == me) + 1
     with conversation.open("a", encoding="utf-8", newline="\n") as f:
         f.write(demo_entry(script, number))
@@ -96,6 +123,9 @@ def main() -> int:
         say(f"[fake {me}] received prompt ({len(prompt)} chars)", step)
     if args.behavior == "fail":
         print(f"[fake {me}] simulated crash: something went terribly wrong", file=sys.stderr, flush=True)
+        return 1
+    if args.behavior == "limit":  # what the real CLIs print when the account's usage runs out
+        print(f"Claude AI usage limit reached|{int(time.time()) + 3600}", flush=True)
         return 1
 
     text = conversation.read_text(encoding="utf-8")

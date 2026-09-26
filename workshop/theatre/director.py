@@ -13,6 +13,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -22,10 +23,13 @@ from ..orchestrator import Orchestrator, other_agent
 from .banter import petty_scoreboard
 from .cast import COMPLETE_FOOTER, COMPLETE_TAGLINE, MOMENTS, SMALL_LABELS, character, status_label
 from .reactions import ActivityTracker, EntryReaction, asks_for_review, classify_entry
+from .screens import ProjectDiffer, ScreenFeed, _read_text
 from .sfx import SoundEffects
 from .speech import SpeechEngine
 from .stats import RunStats, completion_lines, summarise_conversation
 from .text import bubble_excerpt, speech_text, strip_markdown
+
+READ_TARGET = re.compile(r"^(?:cat|type|Get-Content|gc|less|more|head|tail)\s+(?:-\w+\s+\S+\s+)*[\"']?([^\s\"';|]+)", re.I)
 
 WORRY_RX = re.compile(r"\b(?:stop|argu\w*|fight\w*|focus|enough|please|wrong|why|seriously|guys|bicker\w*)\b", re.I)
 
@@ -46,6 +50,7 @@ LABELS = {
     "stopped": "■ STOPPED",
     "human": "👀 WAITING FOR YOU",
     "speaking": "💬 SPEAKING",
+    "limited": "💸 OUT OF USAGE",
 }
 
 from ..agents.demo_script import DEMO_HUMAN_REPLY  # noqa: E402  (re-exported for callers/tests)
@@ -103,6 +108,14 @@ class Director(QObject):
         self._last_small = -99.0
         self._after_beat = 0
         stage.level_source = self._voice_level
+        # what's on their monitors: real diffs, commands and files while working; the web when idle
+        self.screens = {a: ScreenFeed(a) for a in AGENTS}
+        self._screen_rng = random.Random(11)
+        for feed in self.screens.values():
+            feed.go_idle(self._screen_rng)
+        stage.screens = self.screens
+        self.differ = ProjectDiffer(orchestrator.project_dir)
+        self._diff_agent: str | None = None
 
         self._end_timer = QTimer(self)
         self._end_timer.setSingleShot(True)
@@ -112,12 +125,15 @@ class Director(QObject):
         self._gap_timer.timeout.connect(self._next_performance)
         self._ambient = QTimer(self)
         self._ambient.timeout.connect(self._ambient_tick)
-        self._ambient.start(2000)
+        self._ambient.start(1000)
         # while someone is coding, the keyboard is audible now and then
         self._typing = QTimer(self)
         self._typing.timeout.connect(self._typing_tick)
         self._typing.start(1700)
         self._typing_rng = random.Random(5)
+        self._diff_timer = QTimer(self)
+        self._diff_timer.setInterval(1200)
+        self._diff_timer.timeout.connect(self._poll_diffs)
         self._demo_timer = QTimer(self)
         self._demo_timer.timeout.connect(self._demo_tick)
 
@@ -447,9 +463,20 @@ class Director(QObject):
         other = other_agent(agent)
         self.stage.models[other].look_at_other(2.5)
         self.stage.set_activity(agent, "")
+        self._diff_agent = agent
+        try:
+            self.differ.baseline()  # anything that changes from here on is this agent's doing
+        except OSError:
+            pass
+        self._diff_timer.start(max(1200, int(self.differ.last_scan_seconds * 8000)))
+        feed = self.screens[agent]
+        feed.command("# reading conversation.md")
         self.stats_changed.emit()
 
     def on_turn_finished(self, agent: str, exit_code: int) -> None:
+        self._poll_diffs()  # catch the last edits of the turn
+        self._diff_timer.stop()
+        self._diff_agent = None
         self.stage.set_active(None)
         self.stage.set_activity(agent, "")
         self.stage.on_air = self.o.is_busy()
@@ -489,6 +516,11 @@ class Director(QObject):
                 om.react("sideeye" if om.deadpan else "gloating", 2.4)
         elif state == orch.A_COMPLETE:
             m.set_base("complete")
+        elif state == orch.A_LIMITED:
+            m.set_base("sleeping")  # not a crash: he has simply run out
+            om = self.stage.models[other_agent(agent)]
+            if self.rivalry:
+                om.react("stare" if om.deadpan else "gloating", 3.0)
         elif state == orch.A_STOPPED:
             m.set_base("idle")
         self._restore_label(agent)
@@ -526,7 +558,8 @@ class Director(QObject):
             label = labels["sleeping"] if self.stage.models[agent].base == "sleeping" else labels["waiting"]
         else:
             label = {orch.A_PAUSED: labels["paused"], orch.A_ERROR: labels["error"],
-                     orch.A_COMPLETE: labels["complete"], orch.A_STOPPED: labels["stopped"]}.get(state, state)
+                     orch.A_COMPLETE: labels["complete"], orch.A_STOPPED: labels["stopped"],
+                     orch.A_LIMITED: labels["limited"]}.get(state, state)
         self.stage.set_status(agent, state, label)
 
     def _set_status(self, agent: str, text: str) -> None:
@@ -548,8 +581,51 @@ class Director(QObject):
         for line in text.splitlines() or [text]:
             self._on_output_line(agent, line)
 
+    def _poll_diffs(self) -> None:
+        agent = self._diff_agent
+        if agent is None:
+            return
+        try:
+            changes = self.differ.changes()
+        except OSError:
+            return
+        for change in changes[-6:]:
+            self.screens[agent].show_diff(change)
+
+    def _show_file(self, agent: str, path: str) -> None:
+        """Put the file an agent is reading on its monitor (only files inside the project)."""
+        root = self.o.project_dir.resolve()
+        try:
+            target = Path(path.strip().strip("\"'"))
+            target = (target if target.is_absolute() else root / target).resolve()
+            target.relative_to(root)
+        except (ValueError, OSError):
+            return
+        lines = _read_text(target) if target.is_file() else None
+        if lines:
+            self.screens[agent].read(target.relative_to(root).as_posix(), lines[:400])
+
+    def _feed_screen(self, agent: str, line: str, cue) -> None:
+        feed = self.screens[agent]
+        stripped = line.strip()
+        if stripped in ("codex", "thinking") or (agent == "Claude" and stripped and not stripped.startswith("[")):
+            feed.narrate()  # back to talking to itself, not command output
+        if cue and cue.command:
+            feed.command(cue.command)
+            if cue.kind == "read":
+                m = READ_TARGET.search(cue.command)
+                if m:
+                    self._show_file(agent, m.group(1))
+        elif cue and cue.kind == "read" and cue.path:
+            self._show_file(agent, cue.path)
+        elif cue and cue.kind == "edit":
+            QTimer.singleShot(250, self._poll_diffs)
+        elif stripped and not stripped.startswith("[tool] "):
+            feed.output(re.sub(r"^\[tool (?:result|error)\]\s*", "", stripped))
+
     def _on_output_line(self, agent: str, line: str) -> None:
         cue = self.trackers[agent].feed(line)
+        self._feed_screen(agent, line, cue)
         if not cue:
             return
         m = self.stage.models[agent]
@@ -611,6 +687,8 @@ class Director(QObject):
     def on_state(self, state: str) -> None:
         stage = self.stage
         stage.paused = state in (orch.PAUSED,)
+        if state != orch.USAGE_LIMIT:
+            stage.hide_card("limit")
         if state != orch.WAITING_HUMAN:
             stage.hide_card("waiting")
             self._demo_timer.stop()
@@ -620,6 +698,8 @@ class Director(QObject):
             stage.on_air = self.o.is_busy()
         if state == orch.WAITING_HUMAN:
             self._after_idle(self._show_waiting)
+        elif state == orch.USAGE_LIMIT:
+            self._after_idle(self._show_limit)
         elif state == orch.COMPLETE:
             self._after_idle(self._celebrate)
         elif state in (orch.RUNNING, orch.PAUSED):
@@ -694,7 +774,36 @@ class Director(QObject):
         if self.stage.models[agent].base == "coding" and self._typing_rng.random() < 0.65:
             self._sfx("keys", 0.5)
 
+    def _show_limit(self) -> None:
+        limit = self.o.usage_limit
+        if self.o.state != orch.USAGE_LIMIT or limit is None:
+            return
+        who = character(limit.agent)
+        auto = self.o.limit_seconds_left() is not None
+        lines = [f"{who} ({limit.agent}) hit his usage limit. Nothing crashed; the workshop is paused.",
+                 f"It resets at {limit.reset_text()}." if limit.reset_at else "The CLI didn't say when it resets."]
+        self.stage.show_card("limit", f"💸 {who.upper()} IS OUT OF USAGE", lines, "#f2c14e",
+                             footer=self._limit_footer() if auto else "Press Resume once it has reset")
+        self._sfx("wahwah")
+
+    def _limit_footer(self) -> str:
+        left = self.o.limit_seconds_left()
+        if left is None:
+            return "Press Resume once it has reset"
+        h, rem = divmod(int(left), 3600)
+        m, s = divmod(rem, 60)
+        return f"Auto-resume in {h}:{m:02d}:{s:02d}  (or press Resume)"
+
     def _ambient_tick(self) -> None:
+        now_m = time.monotonic()
+        for agent, feed in self.screens.items():
+            working = self.o.is_busy() and self.o.current_agent == agent
+            if feed.mode != "idle" and not working and now_m - feed.last_activity > 8:
+                feed.go_idle(self._screen_rng)  # back to browsing
+            elif feed.mode == "idle" and now_m - feed.page_since > 11:
+                feed.go_idle(self._screen_rng)
+        if self.o.state == orch.USAGE_LIMIT and "limit" in self.stage.cards:
+            self.stage.update_card_footer("limit", self._limit_footer())
         now = time.monotonic()
         busy = self.o.is_busy()
         for agent in AGENTS:

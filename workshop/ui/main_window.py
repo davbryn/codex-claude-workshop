@@ -53,6 +53,7 @@ STATE_TEXT = {
     orch.WAITING_HUMAN: "⚠ HUMAN INPUT REQUIRED",
     orch.NEEDS_ATTENTION: "⚠ Needs attention",
     orch.COMPLETE: "✓ PROJECT COMPLETE",
+    orch.USAGE_LIMIT: "💸 OUT OF USAGE (paused)",
     orch.STOPPED: "■ Stopped",
 }
 
@@ -377,6 +378,8 @@ class MainWindow(QMainWindow):
             self.pause_button.setText("⏸  Pause Workshop")
         elif state == orch.COMPLETE:
             self.pause_button.setText("✓  Complete")
+        elif state == orch.USAGE_LIMIT:
+            self.pause_button.setText("▶  Resume now")
         else:
             self.pause_button.setText("▶  Resume")
         self.pause_button.setEnabled(state != orch.COMPLETE)
@@ -394,7 +397,7 @@ class MainWindow(QMainWindow):
         elif state == orch.RUNNING:
             self.banner.hide()
         if self._pending_message and not busy and state in (orch.PAUSED, orch.WAITING_HUMAN, orch.NEEDS_ATTENTION,
-                                                             orch.COMPLETE, orch.IDLE):
+                                                             orch.COMPLETE, orch.IDLE, orch.USAGE_LIMIT):
             QTimer.singleShot(0, self._deliver_pending)
 
     def _on_output(self, agent: str, stream: str, line: str) -> None:

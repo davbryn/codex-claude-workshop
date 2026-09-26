@@ -43,7 +43,7 @@ def test_every_prompt_states_the_identity_mapping_prominently(tmp_path):
     rules, cast, persona, current = (prompt.index("[CORE WORKSHOP RULES]"), prompt.index("you are GILFOYLE"),
                                      prompt.index("[CODEX PERSONALITY]"), prompt.index("[CURRENT TURN]"))
     assert rules < cast < persona < current
-    assert "## Codex — Turn 3" in prompt and "@Claude" in prompt  # protocol untouched
+    assert "## Codex - Turn 3" in prompt and "@Claude" in prompt  # protocol untouched
 
 
 def test_hostility_levels_and_callbacks_in_prompt():

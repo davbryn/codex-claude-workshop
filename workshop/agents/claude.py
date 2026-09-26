@@ -69,10 +69,21 @@ class ClaudeAdapter(AgentAdapter):
         if kind == "result":
             cost = event.get("total_cost_usd")
             cost_text = f", cost ${cost:.4f}" if isinstance(cost, (int, float)) else ""
-            return (
+            summary = (
                 f"[result] {event.get('subtype', '')} after {event.get('num_turns', '?')} steps"
                 f"{cost_text}, {event.get('duration_ms', 0) / 1000:.0f}s"
             )
+            if event.get("is_error") and event.get("result"):
+                summary += f"\n[result error] {str(event['result'])[:300]}"
+            return summary
+        if kind == "rate_limit_event":
+            # Only a rejection matters (the CLI also reports "allowed" status as it goes).
+            info = event.get("rate_limit_info") or {}
+            if info.get("status") == "rejected":
+                reset = info.get("resetsAt")
+                window = info.get("rateLimitType", "usage")
+                return f"[usage limit] {window} limit reached" + (f"|{int(reset)}" if reset else "")
+            return None
         return None
 
 
