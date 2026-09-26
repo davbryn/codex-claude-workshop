@@ -29,7 +29,7 @@ NAMES = {"Codex": r"(?:codex|gilfoyle)", "Claude": r"(?:claude|dinesh)"}
 ANY_NAME = r"(?:codex|claude|gilfoyle|dinesh)"
 
 DISAGREE_RX = _rx(
-    r"i (?:strongly |respectfully |completely |fundamentally )?disagree",
+    r"i (?:do |still |really |strongly |respectfully |completely |fundamentally )?disagree",
     r"i don'?t agree",
     r"i do not agree",
     ANY_NAME + r" (?:is|was) (?:wrong|mistaken)",
@@ -224,7 +224,8 @@ class EntryReaction:
 
 def classify_entry(turn: ConversationTurn, other: str | None = None) -> EntryReaction:
     content = turn.content
-    prose = strip_code(content)
+    # emphasis markers would hide phrases like "I *do* disagree" or "**Dinesh** was right"
+    prose = re.sub(r"(?<!\w)[*_]{1,3}|[*_]{1,3}(?!\w)", "", strip_code(content))
     other = other or ("Claude" if turn.speaker == "Codex" else "Codex")
     other_rx = NAMES.get(other, re.escape(other))
     r = EntryReaction(speaker=turn.speaker)
@@ -268,7 +269,12 @@ def classify_entry(turn: ConversationTurn, other: str | None = None) -> EntryRea
     if not others_bug and r.mentions_other:
         # "You locked the front door … and left the space bar holding the back door open."
         others_bug = re.search(r"\byou [^.;]{0,60}?\b(?:left|forgot|missed|broke|introduced|overlooked)\b"
-                               r"|\bi'?m not signing\b|\bisn'?t done\b", prose, re.I)
+                               r"|\bi'?m not signing\b|\bisn'?t done\b"
+                               r"|\b(?:makes it|that'?s|it'?s|this is|which is) your (?:bug|mistake|regression|fault)\b"
+                               # "His proposed cumulative bound, however, does not survive …"
+                               r"|\b(?:his|your) [\w\s,-]{0,50}?\b(?:does not|doesn'?t|did not|didn'?t|cannot|can'?t) "
+                               r"(?:survive|hold|work|scale|handle)\b",
+                               prose, re.I)
     # "You were right about X" alongside a catch is a footnote, not the headline
     if others_bug and r.concedes_other and not r.self_admission:
         r.concedes_other = False

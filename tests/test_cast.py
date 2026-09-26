@@ -142,6 +142,25 @@ def test_catch_plus_confession_is_both_wrong():
     assert r.caught_other_bug and r.self_admission and r.moment() == "both_wrong"
 
 
+def test_that_makes_it_your_bug():
+    r = classify_entry(turn("Claude", "Gilfoyle, a typo like Bob:1_0 silently gives Bob a weight of 10. That shipped in "
+                                      "Turn 1, which makes it your bug."))
+    assert r.caught_other_bug and r.moment() == "dinesh_catches"
+
+
+def test_third_person_catch():
+    r = classify_entry(turn("Codex", "Dinesh was right about the example. His proposed cumulative bound, however, "
+                                     "does not survive deliberately changing groups."))
+    assert r.caught_other_bug and r.moment() == "gilfoyle_catches"
+
+
+def test_markdown_emphasis_does_not_hide_reactions():
+    r = classify_entry(turn("Claude", "Your cap holds. I *do* disagree with your rule for the fairness fix. "
+                                      "**Gilfoyle** was right about the cap."))
+    assert r.disagreement and r.concedes_other
+    assert classify_entry(turn("Claude", "my_helper_function works.")).primary_state() != "disagreeing"
+
+
 def test_inline_code_punctuation_does_not_split_sentences():
     entry = "**Thoughts**\n\nIt was still calling `Summer2024!` \"strong\", which Gilfoyle walked past like it was a Hooli billboard."
     assert bubble_excerpt(entry).startswith("It was still calling Summer2024! \"strong\"")
