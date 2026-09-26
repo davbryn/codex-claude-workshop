@@ -163,7 +163,7 @@ def bubble_excerpt(content: str, limit: int = 240) -> str:
     return _take(sentences(content)[:2], limit)
 
 
-def speech_text(content: str, limit: int = 300) -> str:
+def speech_text(content: str, limit: int = 240) -> str:
     """What the character says aloud: the bubble passage, plus the best remaining line if it fits."""
     text, used = _best_passage(content, min(limit, 220))
     if not text:
@@ -172,7 +172,7 @@ def speech_text(content: str, limit: int = 300) -> str:
     rest = [r for r in rest if r[0] > 0]
     if rest:
         extra = max(rest)[1]
-        if len(text) + 1 + len(extra) <= limit:
+        if len(extra) <= 90 and len(text) + 1 + len(extra) <= limit:  # a short kicker only
             text = f"{text} {extra}"
     return clean_for_speech(text)
 

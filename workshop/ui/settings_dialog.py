@@ -61,6 +61,10 @@ class SettingsDialog(QDialog):
         self.kanban = QCheckBox("Shared kanban board from management (KANBAN.md); their asides on it are read aloud")
         self.kanban.setChecked(settings.kanban_enabled)
         cform.addRow(self.kanban)
+        self.side_bits = QCheckBox("Meanwhile: the waiting one emails Jared, doodles, searches… "
+                                   "(up to 3 small extra CLI calls per turn)")
+        self.side_bits.setChecked(settings.side_bits_enabled)
+        cform.addRow(self.side_bits)
         self.timing = QCheckBox("Comic timing: short reaction beats between lines (under a second)")
         self.timing.setChecked(settings.comic_timing)
         cform.addRow(self.timing)
@@ -240,6 +244,7 @@ class SettingsDialog(QDialog):
         s.petty_scoreboard = self.scoreboard.isChecked()
         s.comic_timing = self.timing.isChecked()
         s.kanban_enabled = self.kanban.isChecked()
+        s.side_bits_enabled = self.side_bits.isChecked()
         if self.preset.currentText() != CUSTOM:
             s.last_preset = self.preset.currentText()
         s.codex_personality = self.codex_text.toPlainText()

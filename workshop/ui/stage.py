@@ -203,7 +203,8 @@ class StageWidget(QWidget):
         self.shot_agent: str | None = None  # camera: None = the room, else that agent's monitor close-up
         self.shot_blend = 0.0
         self._shot_shown: str | None = None
-        self.caption: tuple[str | None, str, float] = (None, "", 0.0)  # close-up subtitle
+        self.captions: dict[str, tuple[str, float]] = {}  # close-up subtitles, per character
+        self.kanban_feed = None  # the shared board, as shown in the close-up
         self._screen_cache: dict = {}
 
     # -- time / animation settings -------------------------------------------
@@ -559,38 +560,6 @@ class StageWidget(QWidget):
             self.shot_blend = 1.0 if agent else 0.0
         self.wake()
 
-    def set_caption(self, agent: str | None, text: str) -> None:
-        """A subtitle in the monitor close-up: what the working character is muttering."""
-        self.caption = (agent, text, self.now())
-        self.wake()
-
-    def _paint_caption(self, p: QPainter, frame: QRectF, t: float) -> None:
-        agent, text, born = self.caption
-        if not agent or not text:
-            return
-        appear = min(1.0, (t - born) / 0.25)
-        font = _font(max(15, frame.height() * 0.045), italic=True, family="Segoe UI")
-        name_font = _font(max(13, frame.height() * 0.036), bold=True, family="Bahnschrift")
-        fm = QFontMetricsF(font)
-        width = min(frame.width() * 0.62, fm.horizontalAdvance(text) + 60)
-        body = fm.boundingRect(QRectF(0, 0, width - 32, 400), int(Qt.TextFlag.TextWordWrap), f"“{text}”")
-        box = QRectF(frame.left() + 26, frame.bottom() - body.height() - 70, width, body.height() + 44)
-        p.save()
-        p.setOpacity(appear)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_c("#000000", 0.78))
-        p.drawRoundedRect(box, 10, 10)
-        p.setBrush(_c(ACCENT[agent]))
-        p.drawRect(QRectF(box.left(), box.top() + 8, 4, box.height() - 16))
-        p.setFont(name_font)
-        p.setPen(_c(ACCENT[agent]))
-        p.drawText(QRectF(box.left() + 16, box.top() + 6, box.width() - 24, 20), Qt.AlignmentFlag.AlignLeft, CHARACTER[agent].upper())
-        p.setFont(font)
-        p.setPen(_c("#f2ede4"))
-        p.drawText(QRectF(box.left() + 16, box.top() + 28, width - 32, body.height() + 4),
-                   int(Qt.TextFlag.TextWordWrap), f"“{text}”")
-        p.restore()
-
     def _apply_push_in(self, p: QPainter, L: dict, blend: float) -> None:
         """While cutting in, the room camera pushes toward the monitor, so the cut reads as 'look at his screen'."""
         if self.reduced_motion:
@@ -607,53 +576,135 @@ class StageWidget(QWidget):
         w, h = L["w"], L["h"]
         return QRectF(w * 0.035, h * 0.04, w * 0.93, h * 0.86)
 
+    def _render_cached(self, key_name: str, feed, agent: str, t: float, active: bool, vw: int, vh: int) -> QImage:
+        bit_t0 = feed.bit.get("_t0", 0) if (feed is not None and getattr(feed, "bit", None)) else 0
+        typing = feed is not None and feed.mode in ("bit",) and t - bit_t0 < 12
+        key = (key_name, id(feed), feed.version if feed else 0, int(feed.revealed) if feed else 0,
+               int(t * (8 if typing else 2.5)), vw, vh, feed.mode if feed else "", active)
+        cached = self._screen_cache.get(key_name)
+        if not cached or cached[0] != key:
+            cached = (key, render_screen(feed, agent, t, active, vw, vh))
+            self._screen_cache[key_name] = cached
+        return cached[1]
+
+    def _screen_frame(self, p: QPainter, rect: QRectF, image: QImage, radius: float = 12) -> QRectF:
+        p.setPen(_pen("#000000", 2))
+        p.setBrush(QColor("#17181c"))
+        p.drawRoundedRect(rect, radius, radius)
+        screen = rect.adjusted(10, 10, -10, -14)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawImage(screen, image)
+        sheen = QLinearGradient(screen.topLeft(), screen.bottomRight())
+        sheen.setColorAt(0, _c("#ffffff", 0.05))
+        sheen.setColorAt(0.35, _c("#ffffff", 0.0))
+        p.fillRect(screen, sheen)
+        return screen
+
     def _paint_closeup(self, p: QPainter, L: dict, t: float, alpha: float) -> None:
+        """Split screen: his monitor (big) | the shared kanban board + the other one, meanwhile."""
         agent = self._shot_shown
         if not agent or alpha <= 0:
             return
+        other = "Claude" if agent == "Codex" else "Codex"
         w, h = L["w"], L["h"]
         p.save()
         p.setOpacity(max(0.0, min(1.0, alpha)))
         p.fillRect(QRectF(0, 0, w, h), QColor("#07080a"))
         frame = self.closeup_rect(L)
-        # the monitor itself: bezel, then the screen rendered at stage resolution (crisp text)
-        p.setPen(_pen("#000000", 2))
-        p.setBrush(QColor("#17181c"))
-        p.drawRoundedRect(frame, 14, 14)
-        screen = frame.adjusted(14, 14, -14, -22)
-        # bigger windows show more code, not bigger code: about 1.6x upscaling at most
-        vw = int(max(560, min(1400, screen.width() / 1.6)))
-        vh = max(200, int(vw * screen.height() / max(1.0, screen.width())))
+        gap = max(10.0, w * 0.01)
+        side_w = max(240.0, frame.width() * 0.32)
+        main = QRectF(frame.left(), frame.top(), frame.width() - side_w - gap, frame.height())
+        side = QRectF(main.right() + gap, frame.top(), side_w, frame.height())
+        # his monitor
+        mw = main.width() - 20
+        vw = int(max(560, min(1400, mw / 1.6)))
+        vh = max(200, int(vw * (main.height() - 24) / max(1.0, mw)))
         feed = self.screens.get(agent)
-        key = ("closeup", id(feed), feed.version if feed else 0, int(feed.revealed) if feed else 0, int(t * 2.5),
-               vw, vh, feed.mode if feed else "")
-        cached = self._screen_cache.get(("big", agent))
-        if not cached or cached[0] != key:
-            cached = (key, render_screen(feed, agent, t, True, vw, vh))
-            self._screen_cache[("big", agent)] = cached
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.drawImage(screen, cached[1])
-        sheen = QLinearGradient(screen.topLeft(), screen.bottomRight())
-        sheen.setColorAt(0, _c("#ffffff", 0.05))
-        sheen.setColorAt(0.35, _c("#ffffff", 0.0))
-        p.fillRect(screen, sheen)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#39d98a"))
-        p.drawEllipse(QPointF(frame.center().x(), frame.bottom() - 11), 2.2, 2.2)
-        # picture-in-picture: him at his desk (live), and the other one, meanwhile
-        other = "Claude" if agent == "Codex" else "Codex"
-        big = min(h * 0.34, w * 0.2)
-        small = big * 0.62
-        # both insets sit bottom-right: code is left-aligned, so that corner is usually empty
-        main_rect = QRectF(frame.right() - 22 - big, frame.bottom() - big - 50, big, big)
+        self._screen_frame(p, main, self._render_cached(("big", agent), feed, agent, t, True, vw, vh), 14)
+        # the shared kanban board: always in view during a close-up
+        board_h = side.height() * 0.44
+        board_rect = QRectF(side.left(), side.top() + 22, side.width(), board_h - 22)
+        self._panel_label(p, QRectF(side.left(), side.top(), side.width(), 20), "📋 SHARED KANBAN", "#9fb2c8")
+        if self.kanban_feed is not None and self.kanban_feed.board is not None:
+            bw = int(max(320, min(900, (board_rect.width() - 20) / 1.25)))
+            bh = max(160, int(bw * (board_rect.height() - 24) / max(1.0, board_rect.width() - 20)))
+            self._screen_frame(p, board_rect, self._render_cached("kanban", self.kanban_feed, agent, t, True, bw, bh), 10)
+        # the other one, meanwhile: his own screen, his face, his mutterings
+        meanwhile = QRectF(side.left(), board_rect.bottom() + 30, side.width(), side.bottom() - board_rect.bottom() - 30)
+        self._panel_label(p, QRectF(side.left(), board_rect.bottom() + 8, side.width(), 20),
+                          f"MEANWHILE · {CHARACTER[other].upper()}", ACCENT[other])
+        ofeed = self.screens.get(other)
+        ow = int(max(300, min(900, (meanwhile.width() - 20) / 1.25)))
+        oh = max(160, int(ow * (meanwhile.height() - 24) / max(1.0, meanwhile.width() - 20)))
+        oscreen = self._screen_frame(p, meanwhile, self._render_cached(("side", other), ofeed, other, t, True, ow, oh), 10)
+        small = min(oscreen.height() * 0.46, oscreen.width() * 0.3)
+        self._paint_pip(p, L, other, QRectF(oscreen.right() - small - 6, oscreen.bottom() - small - 6, small, small),
+                        t, main=False, caption=False)
+        if self.captions.get(other):
+            self._paint_caption(p, other, oscreen.adjusted(4, 0, -small - 12, -6), t, compact=True)
+        # his live inset, and his asides
+        big = min(main.height() * 0.34, main.width() * 0.24)
+        main_rect = QRectF(main.right() - 22 - big, main.bottom() - big - 50, big, big)
         self._paint_pip(p, L, agent, main_rect, t, main=True)
-        self._paint_pip(p, L, other, QRectF(main_rect.left() - 26 - small, frame.bottom() - small - 50, small, small),
-                        t, main=False)
-        if self.caption[0] == agent:
-            self._paint_caption(p, frame, t)
+        if self.captions.get(agent):
+            self._paint_caption(p, agent, QRectF(main.left() + 16, main.top(), main.width() - big - 60,
+                                                 main.bottom() - 30), t)
         p.restore()
 
-    def _paint_pip(self, p: QPainter, L: dict, agent: str, rect: QRectF, t: float, main: bool) -> None:
+    def _panel_label(self, p: QPainter, rect: QRectF, text: str, colour: str) -> None:
+        font = _font(max(11, rect.height() * 0.62), bold=True, family="Bahnschrift")
+        font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 112)
+        p.setFont(font)
+        p.setPen(_c(colour))
+        p.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+
+    def set_board(self, board, highlight: tuple = ()) -> None:
+        from ..theatre.screens import ScreenFeed
+
+        if self.kanban_feed is None:
+            self.kanban_feed = ScreenFeed("Codex")
+        self.kanban_feed.show_board(board, highlight)
+        self.wake()
+
+    def set_caption(self, agent: str | None, text: str) -> None:
+        """Subtitles in the close-up for whatever a character is muttering. (None clears them all.)"""
+        if agent is None:
+            self.captions.clear()
+        elif text:
+            self.captions[agent] = (text, self.now())
+        else:
+            self.captions.pop(agent, None)
+        self.wake()
+
+    def _paint_caption(self, p: QPainter, agent: str, area: QRectF, t: float, compact: bool = False) -> None:
+        text, born = self.captions[agent]
+        appear = min(1.0, (t - born) / 0.25)
+        size = area.height() * (0.07 if compact else 0.05)
+        font = _font(max(12 if compact else 15, min(26, size)), italic=True, family="Segoe UI")
+        name_font = _font(max(11, min(20, size * 0.8)), bold=True, family="Bahnschrift")
+        fm = QFontMetricsF(font)
+        width = min(area.width(), fm.horizontalAdvance(text) + 60)
+        body = fm.boundingRect(QRectF(0, 0, width - 32, 400), int(Qt.TextFlag.TextWordWrap), f"“{text}”")
+        box = QRectF(area.left(), area.bottom() - body.height() - 44, width, body.height() + 40)
+        p.save()
+        p.setOpacity(p.opacity() * appear)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_c("#000000", 0.8))
+        p.drawRoundedRect(box, 10, 10)
+        p.setBrush(_c(ACCENT[agent]))
+        p.drawRect(QRectF(box.left(), box.top() + 8, 4, box.height() - 16))
+        p.setFont(name_font)
+        p.setPen(_c(ACCENT[agent]))
+        p.drawText(QRectF(box.left() + 16, box.top() + 5, box.width() - 24, 20), Qt.AlignmentFlag.AlignLeft,
+                   CHARACTER[agent].upper())
+        p.setFont(font)
+        p.setPen(_c("#f2ede4"))
+        p.drawText(QRectF(box.left() + 16, box.top() + 26, width - 32, body.height() + 4),
+                   int(Qt.TextFlag.TextWordWrap), f"“{text}”")
+        p.restore()
+
+    def _paint_pip(self, p: QPainter, L: dict, agent: str, rect: QRectF, t: float, main: bool,
+                   caption: bool = True) -> None:
         p.save()
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(_c("#000000", 0.5))
@@ -679,6 +730,9 @@ class StageWidget(QWidget):
         p.setPen(_pen(ACCENT[agent], 2.2 if main else 1.4, 0.95 if main else 0.6))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRoundedRect(rect, 12, 12)
+        if not caption:
+            p.restore()
+            return
         # caption under the inset
         view = self.views[agent]
         p.setFont(_font(max(11, rect.width() * 0.085), bold=True, family="Bahnschrift"))

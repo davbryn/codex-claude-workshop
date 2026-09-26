@@ -28,7 +28,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Watch Codex and Claude Code collaborate on a project.")
     parser.add_argument("--fake-agents", action="store_true", help="use simulated agents (no CLI usage)")
     parser.add_argument("--fake-delay", type=float, default=None,
-                        help="seconds per fake-agent step (default 1.6, or 0.6 in --demo)")
+                        help="seconds per fake-agent step (default 1.6, or 0.9 in --demo)")
     parser.add_argument("--demo", action="store_true", help="run the scripted theatre demo in a temp folder")
     parser.add_argument("--demo-speed", type=float, default=1.0, help="demo speed multiplier (2 = twice as fast)")
     parser.add_argument("--project", help="skip the setup screen and use this project directory")
@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
 
         args.fake_agents = True
         # the demo keeps the silent "working" stretches short; the characters do the talking
-        args.fake_delay = (args.fake_delay or 0.6) / max(0.1, args.demo_speed)
+        args.fake_delay = (args.fake_delay or 0.9) / max(0.1, args.demo_speed)
         demo_auto_reply = max(2.0, 4.0 / max(0.1, args.demo_speed))
         project = Path(args.project or tempfile.mkdtemp(prefix="workshop-demo-")).resolve()
         project.mkdir(parents=True, exist_ok=True)

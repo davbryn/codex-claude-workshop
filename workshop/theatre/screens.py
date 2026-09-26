@@ -163,6 +163,7 @@ class ScreenFeed:
     page_since: float = 0.0
     capture_output: bool = False
     board: object = None
+    bit: dict | None = None
     highlight: tuple = ()
 
     def _touch(self, mode: str, title: str | None = None) -> None:
@@ -212,6 +213,12 @@ class ScreenFeed:
         self._touch("kanban", "KANBAN.md")
         self.board = board
         self.highlight = tuple(highlight)
+        self.capture_output = False
+
+    def show_bit(self, bit: dict) -> None:
+        """Something the idle agent made while waiting (an email to Jared, a doodle, …)."""
+        self._touch("bit", bit.get("title", ""))
+        self.bit = dict(bit)
         self.capture_output = False
 
     def narrate(self) -> None:

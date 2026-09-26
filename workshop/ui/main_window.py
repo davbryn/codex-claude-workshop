@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self.director.comic_timing = settings.comic_timing
         self.director.camera_cuts = settings.camera_cuts
         self.director.kanban = settings.kanban_enabled
+        self.director.side_bits = settings.side_bits_enabled
         self.director.set_muted(settings.speech_muted)
         if pace:  # let a character finish its line before the next agent starts
             orchestrator.launch_gate = self.director.presentation_idle
@@ -345,6 +346,7 @@ class MainWindow(QMainWindow):
         self.director.comic_timing = s.comic_timing
         self.director.camera_cuts = s.camera_cuts
         self.director.kanban = s.kanban_enabled
+        self.director.side_bits = s.side_bits_enabled
         if not s.camera_cuts:
             self.stage.set_shot(None)
         self.stage.set_motion(s.animations, s.reduced_motion, s.typewriter)

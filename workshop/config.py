@@ -54,6 +54,7 @@ class Settings:
     comic_timing: bool = True
     camera_cuts: bool = True  # cut to the working agent's monitor, full-size
     kanban_enabled: bool = True  # management's shared KANBAN.md, with asides spoken while they work
+    side_bits_enabled: bool = True  # the waiting agent's idle-time comedy (small extra CLI calls)
     theme_version: int = THEME_VERSION
 
     @classmethod

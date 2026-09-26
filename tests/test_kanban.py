@@ -109,3 +109,35 @@ def test_an_aside_being_cut_off_does_not_end_the_next_line(qapp, tmp_path):
                         classify_entry(entry)))
     assert d.current is not None and d.current.turn is entry  # the line is still being performed
     d.shutdown()
+
+
+def test_the_idle_one_gets_his_own_bit_and_line(qapp, tmp_path):
+    from workshop.agents.fake import FakeAdapter
+    from workshop.orchestrator import Orchestrator
+    from workshop.project import ensure_protocol_file, start_new_conversation
+    from workshop.theatre.director import Director
+    from workshop.theatre.sfx import SoundEffects
+    from workshop.theatre.sidebits import build_prompt
+    from workshop.theatre.speech import NullSpeechEngine
+    from workshop.ui.stage import StageWidget
+
+    ensure_protocol_file(tmp_path)
+    start_new_conversation(tmp_path, "x", "Codex")
+    o = Orchestrator(tmp_path, {a: FakeAdapter(a) for a in ("Codex", "Claude")}, {})
+    d = Director(o, StageWidget(), NullSpeechEngine(), SoundEffects(False))
+    assert not d._bits_real  # fake agents never trigger real side calls
+    d.on_turn_started("Codex", 1)
+    d._on_output_line("Codex", "[tool] Edit: wordle.py")
+    context = d._bit_context("Codex")
+    assert "Status:" in context and "seconds" in context
+    prompt = build_prompt("Claude", context, ["email"])
+    assert "You are Dinesh" in prompt and "Gilfoyle (Codex) is working" in prompt and "(email)" in prompt
+    assert "Do not use tools" in prompt
+    d._on_bit("Claude", {"kind": "email", "title": "Re: Gilfoyle", "body": "Jared, he did it again.",
+                         "line": "Cc'ing HR."})
+    assert d.screens["Claude"].mode == "bit" and d.screens["Claude"].bit["title"] == "Re: Gilfoyle"
+    assert d._muttering == "Claude"  # his line is voiced (it's his own, from his own CLI)
+    d._end_mutter()
+    d._on_bit("Codex", {"kind": "note", "title": "x", "body": "y", "line": "z"})  # the worker: ignored
+    assert d.screens["Codex"].mode != "bit"
+    d.shutdown()

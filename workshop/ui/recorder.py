@@ -130,7 +130,8 @@ class Recorder(QObject):
         audio = self.tmp / "audio.wav"
         self._write_audio(audio, self.frames / self.fps)
         subprocess.run([self.ffmpeg, "-y", "-loglevel", "error", "-i", str(self.video_path), "-i", str(audio),
-                        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-shortest",
+                        "-movflags", "+faststart",
                         str(self.output)], check=True)
         return self.output
 

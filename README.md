@@ -187,6 +187,22 @@ Asides still pending when he delivers his entry play right after it, as a tag. T
 is planning and presentation only: `conversation.md` remains the protocol. It can be
 switched off in Settings → The Cast.
 
+**Meanwhile.** The agents code in turns, but the comedy doesn't have to wait. While one
+works, the close-up is a split screen:
+* **Left:** his monitor, full-size.
+* **Top right:** the shared kanban board, always in view.
+* **Bottom right:** "MEANWHILE" — the other one's screen, with his live face.
+
+Every so often (at most 3 times a turn), the waiting agent gets a small, separate call
+to his **own** CLI, asking in character for one idle activity about what the other is
+visibly doing right now: a complaint email to Jared, a search, an ASCII doodle, a Slack
+message or a notes file, plus one line he mutters, which is spoken aloud. These side
+calls:
+* run in a temporary folder, with Claude's tools disabled and Codex in a read-only
+  sandbox, so they can't touch the project, `conversation.md` or the orchestration;
+* use a little extra CLI usage (switch them off in Settings → The Cast);
+* never run with fake agents; the demo has scripted equivalents.
+
 **Usage limits.** When Claude or Codex runs out of usage mid-turn, the workshop treats
 it as a pause, not a crash. The card shows who is out and when the limit resets
 (Claude reports the exact time). The workshop then resumes automatically a minute

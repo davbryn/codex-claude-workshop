@@ -322,3 +322,32 @@ DEMO_KANBAN[7] = (
            ['Final review (Gilfoyle) — "Everything is in Done. Jared can finally sleep."',
             'Case-sensitivity tests (Dinesh) — "Proposing completion. Nobody touch the board."'], list(_A)),
 )
+
+
+# --- what the idle one gets up to while the other works (demo only; real runs ask the idle agent's CLI) ---
+DEMO_BITS: dict[int, dict] = {
+    0: {"kind": "note", "title": "things_dinesh_is_building.txt",
+        "body": "- a StorageBackend interface\n- an InMemory backend\n- a SQLite backend 'for scale'\n- a factory\n- a plugin registry\n(for a dict)",
+        "line": "He is building a registry. For plugins. That do not exist."},
+    1: {"kind": "email", "title": "Gilfoyle is deleting my architecture (again)",
+        "body": "Jared,\nGilfoyle has moved my card to Done by deleting it. Is that allowed? It feels like it shouldn't be allowed.\nThanks,\nDinesh",
+        "line": "Cc'ing HR. For the paper trail."},
+    2: {"kind": "note", "title": "dinesh_victory_speech.txt",
+        "body": "Predicted phrases:\n- 'Oh, that's interesting'\n- 'Weird.'\n- 'a growth opportunity'\n- the gold chain, somehow",
+        "line": "He's found something. I can tell. He's breathing differently."},
+    3: {"kind": "chat", "title": "@ jared",
+        "body": "Hey Jared, quick one: is there a kanban column for 'Gilfoyle is right but annoying about it'? Asking so I can put this whole sprint in it.",
+        "line": "He fixed it in one line. One. Line."},
+    4: {"kind": "doodle", "title": "dinesh's benchmark, a forecast",
+        "body": "   cache   dict\n    ___     _\n   |   |   | |\n   |   |   | |\n   |188|   |41\n   |___|   |_|\n  (slower) (fine)",
+        "line": "I have already drawn the graph. I am waiting for him to catch up."},
+    5: {"kind": "note", "title": "things_i_was_right_about.md",
+        "body": "1. encode(0) — ok fine, not that one\n2. the tests\n3. the kanban board (Jared agrees)\n4. gold is a colour",
+        "line": "He is reviewing my benchmark. I can hear him enjoying it."},
+    6: {"kind": "search", "title": "dinesh chugtai tesla gold wheels",
+        "body": "▸ Car configurator: 'Wheels: 21\" Gold' (saved 14 times)\n▸ Forum: 'is it bad if my horn says YES.'\n▸ Did you mean: dinesh case-sensitive tests",
+        "line": "Management took his side. I've decided to find that funny."},
+    7: {"kind": "email", "title": "Re: Final review (please be nice)",
+        "body": "Jared,\nGilfoyle is doing the final review. If the project ships, I'd like it noted that the tests were mine. If it doesn't, the tests were also mine, but emotionally.\nDinesh",
+        "line": "If he finds nothing, I'm getting it framed."},
+}

@@ -44,6 +44,8 @@ def render_screen(feed: ScreenFeed | None, agent: str, t: float, active: bool, w
         _paint_blank(p, W, H, agent, t)
     elif feed.mode == "idle" and feed.page is not None:
         _paint_browser(p, W, H, feed, t)
+    elif feed.mode == "bit" and feed.bit:
+        _paint_bit(p, W, H, feed, agent, t)
     elif feed.mode == "kanban" and feed.board is not None:
         _paint_kanban(p, W, H, feed, t)
     elif feed.mode == "terminal":
@@ -152,6 +154,107 @@ def _paint_terminal(p: QPainter, W: int, H: int, feed: ScreenFeed, agent: str, t
     if int(t * 2) % 2 == 0:
         p.setPen(QColor(ACCENT[agent]))
         p.drawText(QPointF(6, min(H - 4, y + lh - 4)), "█")
+
+
+def _wrap(p: QPainter, text: str, rect: QRectF, colour: str, font: QFont) -> float:
+    p.setFont(font)
+    p.setPen(QColor(colour))
+    fm = QFontMetricsF(font)
+    bounds = fm.boundingRect(rect, int(Qt.TextFlag.TextWordWrap), text)
+    p.drawText(rect, int(Qt.TextFlag.TextWordWrap), text)
+    return min(rect.height(), bounds.height())
+
+
+def _paint_bit(p: QPainter, W: int, H: int, feed: ScreenFeed, agent: str, t: float) -> None:
+    """The idle agent's own idle-time creation: an email to Jared, a search, a doodle, a chat, a note."""
+    bit = feed.bit
+    kind = bit.get("kind", "note")
+    title, body = bit.get("title", ""), bit.get("body", "")
+    # type it out over a few seconds, like he's actually writing it
+    age = max(0.0, t - feed.bit.get("_t0", t))
+    shown = body[: int(age * 45)] if age < len(body) / 45 else body
+    if kind == "email":
+        p.fillRect(QRectF(0, 0, W, H), QColor("#ffffff"))
+        p.fillRect(QRectF(0, 0, W, 24), QColor("#0f5fb8"))
+        p.setFont(_font(12, bold=True, family="Segoe UI"))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(QRectF(8, 0, W - 16, 24), Qt.AlignmentFlag.AlignVCenter, "✉ New message — Hooli Mail")
+        rows = (("To:", "Jared (management)"), ("Cc:", "HR" if "hr" in body.lower() else ""), ("Subject:", title))
+        y = 28
+        p.setFont(_font(11.5, family="Segoe UI"))
+        fm = QFontMetricsF(p.font())
+        for label, value in rows:
+            if not value:
+                continue
+            p.setPen(QColor("#6b7280"))
+            p.drawText(QPointF(10, y + fm.ascent()), label)
+            p.setPen(QColor("#111827"))
+            p.drawText(QPointF(66, y + fm.ascent()), _elide(fm, value, W - 76))
+            y += fm.height() + 3
+            p.setPen(QPen(QColor("#e5e7eb"), 1))
+            p.drawLine(QPointF(8, y), QPointF(W - 8, y))
+            y += 4
+        _wrap(p, shown, QRectF(10, y + 4, W - 20, H - y - 34), "#1f2937", _font(12, family="Segoe UI"))
+        p.fillRect(QRectF(10, H - 28, 64, 20), QColor("#0f5fb8"))
+        p.setFont(_font(11, bold=True, family="Segoe UI"))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(QRectF(10, H - 28, 64, 20), Qt.AlignmentFlag.AlignCenter, "Send")
+    elif kind == "search":
+        p.fillRect(QRectF(0, 0, W, H), QColor("#ffffff"))
+        p.setFont(_font(18, bold=True, family="Segoe UI"))
+        x = 12
+        for ch, col in zip("Hooli", ("#4285f4", "#ea4335", "#fbbc05", "#4285f4", "#34a853")):
+            p.setPen(QColor(col))
+            p.drawText(QPointF(x, 30), ch)
+            x += QFontMetricsF(p.font()).horizontalAdvance(ch)
+        box = QRectF(10, 40, W - 20, 26)
+        p.setPen(QPen(QColor("#dadce0"), 1))
+        p.setBrush(QColor("#ffffff"))
+        p.drawRoundedRect(box, 13, 13)
+        typed = title[: int(age * 18)]
+        cursor = "|" if int(t * 2) % 2 == 0 and len(typed) < len(title) else ""
+        p.setFont(_font(12, family="Segoe UI"))
+        fm = QFontMetricsF(p.font())
+        p.setPen(QColor("#202124"))
+        p.drawText(QRectF(24, 40, W - 48, 26), Qt.AlignmentFlag.AlignVCenter, _elide(fm, "🔍 " + typed + cursor, W - 50))
+        if len(typed) >= len(title):
+            _wrap(p, body, QRectF(14, 76, W - 28, H - 80), "#1a0dab", _font(12, family="Segoe UI"))
+    elif kind == "doodle":
+        p.fillRect(QRectF(0, 0, W, H), QColor("#fdf6d8"))
+        p.setPen(QPen(QColor(120, 160, 220, 70), 1))
+        for y in range(34, H, 16):
+            p.drawLine(0, y, W, y)
+        p.setPen(QPen(QColor(220, 90, 90, 90), 1))
+        p.drawLine(28, 0, 28, H)
+        p.setFont(_font(12, bold=True, family="Segoe Print"))
+        p.setPen(QColor("#3b3b8f"))
+        p.drawText(QRectF(34, 4, W - 40, 26), Qt.AlignmentFlag.AlignVCenter, title)
+        lines = shown.splitlines()
+        font = _font(13, family=MONO)
+        p.setFont(font)
+        fm = QFontMetricsF(font)
+        y = 40
+        for line in lines[:9]:
+            p.drawText(QPointF(38, y + fm.ascent()), line)
+            y += fm.height()
+    elif kind == "chat":
+        p.fillRect(QRectF(0, 0, W, H), QColor("#1a1d21"))
+        p.fillRect(QRectF(0, 0, 70, H), QColor("#3f0e40"))
+        p.setFont(_font(10.5, bold=True, family="Segoe UI"))
+        p.setPen(QColor("#e9d7ea"))
+        for i, ch in enumerate(("# general", "# engineering", "# random", "@ jared")):
+            p.drawText(QPointF(6, 22 + i * 18), ch)
+        p.setFont(_font(12, bold=True, family="Segoe UI"))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(QRectF(80, 4, W - 90, 22), Qt.AlignmentFlag.AlignVCenter, title or "# engineering")
+        p.setFont(_font(11.5, bold=True, family="Segoe UI"))
+        p.setPen(QColor(ACCENT.get(agent, "#8fb8ff")))
+        p.drawText(QPointF(80, 44), {"Codex": "gilfoyle", "Claude": "dinesh"}.get(agent, agent))
+        _wrap(p, shown, QRectF(80, 50, W - 90, H - 56), "#d1d2d3", _font(12, family="Segoe UI"))
+    else:  # note
+        p.fillRect(QRectF(0, 0, W, H), QColor("#1e1e1e"))
+        top = _title_bar(p, W, H, title or "notes.txt", "#c586c0", "📝")
+        _wrap(p, shown, QRectF(10, top + 4, W - 20, H - top - 8), "#d4d4d4", _font(12.5, family=MONO))
 
 
 OWNER_COLOUR = {"gilfoyle": "#e0564b", "codex": "#e0564b", "dinesh": "#6f9dff", "claude": "#6f9dff"}

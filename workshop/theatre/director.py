@@ -23,7 +23,8 @@ from ..orchestrator import Orchestrator, other_agent
 from .banter import petty_scoreboard
 from .cast import COMPLETE_FOOTER, COMPLETE_TAGLINE, MOMENTS, SMALL_LABELS, character, status_label
 from .reactions import ActivityTracker, EntryReaction, asks_for_review, classify_entry
-from ..kanban import moved_cards, new_asides, read_board
+from ..kanban import Aside, moved_cards, new_asides, read_board
+from .sidebits import SideBits
 from .screens import ProjectDiffer, ScreenFeed, _read_text
 from .sfx import SoundEffects
 from .speech import SpeechEngine
@@ -129,6 +130,18 @@ class Director(QObject):
         self._mutters: deque = deque(maxlen=4)
         self._muttering: str | None = None
         self._mutter_live = False
+        # the idle one contributes to the comedy asynchronously (a small side call to his own CLI)
+        self.side_bits = True
+        adapters = getattr(orchestrator, "adapters", {}) or {}
+        self._bits_real = bool(adapters) and not any(type(a).__name__ == "FakeAdapter" for a in adapters.values())
+        self._demo = demo_auto_reply is not None
+        self._bits = SideBits(adapters, self)
+        self._bits.ready.connect(self._on_bit)
+        self._bits_this_turn = 0
+        self._next_bit_at = float("inf")
+        self._recent_kinds: dict[str, list[str]] = {a: [] for a in AGENTS}
+        if self._board is not None:
+            stage.set_board(self._board)
 
         self._end_timer = QTimer(self)
         self._end_timer.setSingleShot(True)
@@ -185,6 +198,7 @@ class Director(QObject):
         return self.speech_enabled and not self.muted and self.speech.available()
 
     def shutdown(self) -> None:
+        self._bits.shutdown()
         for timer in (self._end_timer, self._gap_timer, self._ambient, self._demo_timer, self._typing):
             timer.stop()
         self.speech.stop()
@@ -520,6 +534,8 @@ class Director(QObject):
         feed.command("# reading conversation.md")
         feed.narrate()  # the CLI echoes its prompt first: only real commands' output goes on screen
         self._turn_began = time.monotonic()
+        self._bits_this_turn = 0
+        self._next_bit_at = self._turn_began + (2.5 if self._demo else 20)
         self.stats_changed.emit()
 
     def on_turn_finished(self, agent: str, exit_code: int) -> None:
@@ -648,6 +664,7 @@ class Director(QObject):
         if board is None:
             return
         old, self._board = self._board, board
+        self.stage.set_board(board, tuple(c.title for c in moved_cards(old, board)))
         agent = self._diff_agent
         if agent is None or not speak:
             return
@@ -668,9 +685,8 @@ class Director(QObject):
         agent = aside.speaker
         self._muttering = agent
         text = aside.text
-        if self.stage.shot_agent == agent:
-            self.stage.set_caption(agent, text)
-        else:
+        self.stage.set_caption(agent, text)  # subtitled in the close-up (his panel or the meanwhile panel)
+        if self.stage.shot_agent is None:
             self.stage.show_speech(agent, f"“{text}”", mode="typewriter")
         m = self.stage.models[agent]
         m.look_at_other(2.0) if self.rivalry and re.search(r"(?i)gilfoyle|dinesh|codex|claude", text) else None
@@ -684,11 +700,12 @@ class Director(QObject):
         self._mutter_live = False
         if agent and self.current is None:
             self.stage.models[agent].set_talking(False)
-        QTimer.singleShot(1500, lambda: self.stage.set_caption(None, ""))
+        if agent:
+            QTimer.singleShot(1500, lambda a=agent: self.stage.set_caption(a, ""))
         QTimer.singleShot(700, self._next_performance)  # more asides, or let the next agent start
 
     def _interrupt_mutter(self) -> None:
-        while len(self._mutters) > 2:
+        while len(self._mutters) > 1:  # at most one tag after his line: keep the pace up
             self._mutters.popleft()
         if self._muttering:
             agent = self._muttering
@@ -955,12 +972,80 @@ class Director(QObject):
         self._last_cut = now
         self.stage.set_shot(want)
 
+    # -- the idle one, meanwhile ------------------------------------------------------
+
+    def _maybe_request_bit(self) -> None:
+        if not self.side_bits or not self.o.is_busy() or self.o.state == orch.USAGE_LIMIT:
+            return
+        now = time.monotonic()
+        worker = self.o.current_agent
+        if worker is None or self._bits_this_turn >= 3 or now < self._next_bit_at:
+            return
+        idle = other_agent(worker)
+        if self._demo:
+            from ..agents.demo_files import DEMO_BITS
+
+            index = sum(1 for t in parse_conversation(self.o.conversation_text()) if t.speaker in AGENTS)
+            bit = DEMO_BITS.get(index)
+            self._bits_this_turn = 3  # one per demo turn
+            if bit:
+                QTimer.singleShot(0, lambda b=dict(bit): self._on_bit(idle, b))
+            return
+        if not self._bits_real or self._bits.busy(idle):
+            return
+        if self._bits.request(idle, self._bit_context(worker), self._recent_kinds[idle]):
+            self._bits_this_turn += 1
+            self._next_bit_at = now + 75
+
+    def _bit_context(self, worker: str) -> str:
+        """Public facts about what the working one is doing right now (what the idle one can 'see')."""
+        feed = self.screens[worker]
+        view = self.stage.views[worker]
+        parts = [f"Status: {view.label}" + (f" ({view.activity})" if view.activity else "")]
+        parts.append(f"He has been working on this turn for {int(time.monotonic() - self._turn_began)} seconds.")
+        if feed.mode in ("editor", "reader") and feed.title:
+            parts.append(f"On his screen: {feed.title}.")
+        commands = [text for kind, text in feed.lines if kind == "cmd" and not text.startswith("#")][-2:]
+        if commands:
+            parts.append("His recent commands: " + "; ".join(commands))
+        outputs = [text for kind, text in feed.lines if kind == "out"][-2:]
+        if outputs:
+            parts.append("Latest output: " + " / ".join(outputs))
+        if self._board:
+            doing = [c for c in self._board.columns.get("Doing", [])]
+            if doing:
+                parts.append("Kanban, Doing: " + "; ".join(
+                    f"'{c.title}'" + (f" ({c.owner})" if c.owner else "") + (f" — \"{c.aside}\"" if c.aside else "")
+                    for c in doing[:3]))
+        turns = [t for t in parse_conversation(self.o.conversation_text()) if t.speaker == worker]
+        if turns:
+            parts.append(f"His last entry said: \"{bubble_excerpt(turns[-1].content, 200)}\"")
+        board = self.scoreboard.get(worker) if isinstance(self.scoreboard, dict) else None
+        if board is not None:
+            parts.append(f"Petty scoreboard: he has caught {board.bugs_caught} of your bugs.")
+        return "\n".join(f"- {p}" for p in parts)
+
+    def _on_bit(self, agent: str, bit: dict) -> None:
+        if agent == self._diff_agent or (self.o.is_busy() and self.o.current_agent == agent):
+            return  # his turn started meanwhile: the moment has passed
+        bit["_t0"] = self.stage.now()
+        self.screens[agent].show_bit(bit)
+        self._recent_kinds[agent] = (self._recent_kinds[agent] + [bit.get("kind", "")])[-4:]
+        m = self.stage.models[agent]
+        if not m.talking:
+            m.react("smug" if m.deadpan else "gloating", 2.0)
+        if bit.get("line"):
+            self._mutters.append(Aside(agent, bit["line"]))
+            self._next_mutter()
+
     def _ambient_tick(self) -> None:
+        self._maybe_request_bit()
         self._update_shot()
         now_m = time.monotonic()
         for agent, feed in self.screens.items():
             working = self.o.is_busy() and self.o.current_agent == agent
-            if feed.mode != "idle" and not working and now_m - feed.last_activity > 8:
+            hold = 30 if feed.mode == "bit" else 8  # give his idle-time masterpiece a chance to be read
+            if feed.mode != "idle" and not working and now_m - feed.last_activity > hold:
                 feed.go_idle(self._screen_rng)  # back to browsing
             elif feed.mode == "idle" and now_m - feed.page_since > 11:
                 feed.go_idle(self._screen_rng)
