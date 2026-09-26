@@ -133,8 +133,11 @@ class SetupDialog(QDialog):
         self.advanced_toggle.toggled.connect(self._toggle_advanced)
 
         warning = QLabel(
-            "⚠ Both agents will run as child processes with permission to <b>edit files and run commands</b> "
-            "inside the selected project directory. Use a directory you are happy for them to change."
+            "⚠ Both agents run with permission to <b>edit files and run commands</b>. They start in the selected "
+            "project directory and are instructed to work only there. Codex also uses its CLI sandbox, which limits "
+            "its writes to the project and temp folders. Claude Code has no such OS-level boundary: its shell "
+            "commands could reach files outside the project, depending on your Claude Code configuration. "
+            "Use a directory you are happy for them to change."
             + ("<br><b>FAKE AGENTS:</b> no real Codex/Claude usage will be consumed." if fake_agents else "")
         )
         warning.setWordWrap(True)
@@ -241,7 +244,8 @@ class SetupDialog(QDialog):
             answer = QMessageBox.warning(
                 self,
                 "Are you sure?",
-                f"{warning}\n\nThe agents will be able to modify files and run commands anywhere inside it. "
+                f"{warning}\n\nThe agents will be able to modify files and run commands anywhere inside it "
+                "(and Claude Code's shell commands are not confined to it at all). "
                 "It is strongly recommended to use a dedicated project folder.\n\nContinue anyway?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,

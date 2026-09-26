@@ -21,9 +21,9 @@ from .conversation import (
     detect_disagreement,
     next_turn_number,
     parse_conversation,
-    read_conversation,
-    signal_for_turn,
     get_control_signal,
+    read_conversation,
+    validate_append,
 )
 from .project import CONVERSATION_FILE, PROTOCOL_FILE
 from .prompts import build_prompt
@@ -197,8 +197,16 @@ class Orchestrator(QObject):
             self.message.emit("warning", f"⚠ HUMAN INPUT REQUIRED — {signal.detail}")
             return
 
-        prefix = f"{signal.speaker} completed without a valid handoff. " if signal.speaker in AGENTS else ""
-        self._needs_attention(prefix + signal.detail)
+        # missing / invalid / malformed / empty: never guess who goes next.
+        if signal.speaker in AGENTS:
+            self._set_agent_state(signal.speaker, A_ERROR)
+        if signal.kind == "missing" and signal.speaker in AGENTS:
+            text = f"{signal.speaker} completed without a valid handoff. {signal.detail}"
+        elif signal.kind in ("invalid", "malformed"):
+            text = f"Malformed handoff in {signal.speaker}'s latest entry: {signal.detail}"
+        else:
+            text = signal.detail
+        self._needs_attention(text)
 
     def _launch(self, agent: str) -> None:
         adapter = self.adapters[agent]
@@ -266,26 +274,30 @@ class Orchestrator(QObject):
             self._needs_attention(f"{agent} completed without updating conversation.md.")
             return
 
-        turns = parse_conversation(text)
-        latest = turns[-1] if turns else None
-        if latest is None or latest.speaker != agent:
+        problem = validate_append(text_before, text, agent)
+        if problem:
             self._set_agent_state(agent, A_ERROR)
-            self._needs_attention(f"{agent} completed without appending an entry under its own '## {agent}' heading.")
+            backup = self._save_pre_turn_backup(text_before, agent)
+            note = f"\n\nThe conversation as it was before this turn was saved to {backup.name}." if backup else ""
+            self._needs_attention(problem + note, level="error")
             return
 
+        latest = parse_conversation(text)[-1]
         if detect_disagreement(latest.content):
             self.disagreement.emit(agent)
-
-        signal = signal_for_turn(latest)
-        if signal.kind == "handoff" and signal.agent == agent:
-            self._set_agent_state(agent, A_ERROR)
-            self._needs_attention(f"{agent} handed off to itself (@{agent}).")
-            return
 
         self._set_agent_state(agent, A_PAUSED if self.paused else A_WAITING)
         self._advance()
 
     # -- helpers ------------------------------------------------------------
+
+    def _save_pre_turn_backup(self, text: str, agent: str) -> Path | None:
+        path = self.project_dir / f"conversation.before-{agent.lower()}-{time.strftime('%Y%m%d-%H%M%S')}.bak.md"
+        try:
+            path.write_text(text, encoding="utf-8", newline="")
+        except OSError:
+            return None
+        return path
 
     def _needs_attention(self, text: str, level: str = "warning") -> None:
         self.last_error = text

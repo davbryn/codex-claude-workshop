@@ -82,12 +82,27 @@ The referee reads **only the latest entry**:
 | --- | --- |
 | `@Codex` / `@Claude` on the last line | that agent runs next |
 | `HUMAN DECISION NEEDED: ...` anywhere | pauses with **⚠ HUMAN INPUT REQUIRED** |
-| `PROJECT COMPLETE` (no handoff) | done, *if* it answers the other agent's completion proposal |
-| no handoff, `@Bob`, or both agents tagged | pauses and reports the problem |
+| the line `PROJECT COMPLETE` (no handoff) | done, *if* the other agent's previous entry had the line `PROPOSE PROJECT COMPLETE` |
+| no handoff, `@Bob`, both agents tagged, an agent tagging itself, or `PROJECT COMPLETE` plus a handoff | pauses and reports the problem |
 
-The app also pauses and reports if an agent exits non-zero, exits without changing
-`conversation.md`, writes under the wrong heading, or hands off to itself. The turn
-is never passed on silently.
+Completion takes two steps. One agent adds a line `PROPOSE PROJECT COMPLETE` and hands
+off. The other agent reviews independently and, if it agrees, ends with a line
+`PROJECT COMPLETE`. Both markers only count as whole lines of their own, so prose such
+as "the project is not complete" never triggers them. Human interventions between the
+proposal and the agreement are allowed.
+
+These rules apply equally to a turn that just finished and to a conversation opened
+with **Continue existing workshop** (including one a human edited by hand).
+
+After every agent turn the app also checks that `conversation.md` is **append-only**.
+The file must still start with the entire previous conversation, and the new text must be
+exactly one entry under the agent's own heading. Changes to line endings are tolerated.
+If an agent edits, truncates or replaces history, adds text outside an entry, or writes
+more than one entry, the workshop pauses with an error. It also saves the pre-turn
+conversation as `conversation.before-<agent>-<time>.bak.md` so you can restore it.
+
+The app also pauses and reports if an agent exits non-zero or exits without changing
+`conversation.md`. The turn is never passed on silently.
 
 **⚔ TECHNICAL DISAGREEMENT** is a purely cosmetic badge, shown when an entry contains
 phrases like "I disagree" or "over-engineered". It never affects orchestration.
@@ -118,8 +133,21 @@ commands**. They are saved to `config/settings.json`.
 
 ## Safety
 
-This app deliberately launches coding agents that **edit files and run commands**
-inside the project directory you choose. It:
+This app deliberately launches coding agents that **edit files and run commands**.
+Both start in the project directory you choose and are instructed to work only there,
+but the actual enforcement differs:
+
+* **Codex** runs in its CLI sandbox (`workspace-write`), which limits its writes to
+  the project and temp folders and blocks network access.
+* **Claude Code** starts in the project directory. Its file-edit tools follow Claude
+  Code's own permission rules, but the default `--allowedTools "Bash PowerShell"` lets
+  it run shell commands, and those are **not** confined to the project by the operating
+  system. What it can reach depends on your local Claude Code configuration. The
+  installed CLI (2.1.282) has no command-line sandbox option, so the app does not
+  pretend to add one. Remove `Bash PowerShell` from its extra args if you want it
+  unable to run commands at all (it then can't run tests either).
+
+The app itself:
 
 * warns before using a drive root, your user folder, Desktop, Documents, Downloads and similar folders;
 * never runs anything as administrator;
@@ -134,7 +162,8 @@ python -m pytest -q
 python tools/make_avatars.py    # regenerate the placeholder avatars in assets/
 ```
 
-Fake agents (`workshop/agents/fake_agent.py`) run as real child processes, so the
+Fake agents are a small script, `workshop/agents/fake_agent.py`, launched by the
+`FakeAdapter` in `workshop/agents/fake.py`. They run as real child processes, so the
 tests exercise the same process handling, pausing, error handling and completion
 logic as the real CLIs. Replace `assets/codex.png` and `assets/claude.png` with any
 images you like. If they are missing, the app shows generated initials instead.

@@ -23,6 +23,7 @@ SPEAKERS = AGENTS + ("Human",)
 
 HUMAN_DECISION_MARKER = "HUMAN DECISION NEEDED:"
 COMPLETE_MARKER = "PROJECT COMPLETE"
+PROPOSE_COMPLETE_MARKER = "PROPOSE PROJECT COMPLETE"
 
 # The separator is normally "—", but agents writing through a non-UTF-8 shell
 # can mangle it (e.g. "## Codex ? Turn 6" or "## Codex â€” Turn 6"), so any
@@ -163,6 +164,7 @@ def signal_for_turn(turn: ConversationTurn) -> ControlSignal:
         question = turn.content[turn.content.lower().index(HUMAN_DECISION_MARKER.lower()) :]
         return ControlSignal("human", speaker=speaker, detail=question.splitlines()[0].strip())
 
+    declares_complete = has_marker(turn.content, COMPLETE_MARKER)
     last_line = _last_meaningful_line(turn.content)
     mentions = [m for m in _MENTION_RE.findall(last_line)]
     if mentions:
@@ -173,14 +175,51 @@ def signal_for_turn(turn: ConversationTurn) -> ControlSignal:
                 "malformed", speaker=speaker, detail=f"Both agents are tagged in the final line: {last_line!r}"
             )
         if len(known) == 1:
-            return ControlSignal("handoff", agent=known.pop(), speaker=speaker)
+            target = known.pop()
+            if target == speaker:
+                return ControlSignal(
+                    "malformed", speaker=speaker, detail=f"{speaker} handed off to itself (@{speaker})."
+                )
+            if declares_complete:
+                return ControlSignal(
+                    "malformed",
+                    speaker=speaker,
+                    detail=f"The entry says {COMPLETE_MARKER} but also hands off to @{target}.",
+                )
+            return ControlSignal("handoff", agent=target, speaker=speaker)
         return ControlSignal(
             "invalid", speaker=speaker, detail=f"Handoff to unknown agent: {', '.join('@' + m for m in unknown)}"
         )
 
-    if COMPLETE_MARKER in turn.content:
+    if declares_complete:
         return ControlSignal("complete", speaker=speaker)
+    if has_marker(turn.content, PROPOSE_COMPLETE_MARKER):
+        return ControlSignal(
+            "missing",
+            speaker=speaker,
+            detail=f"It says {PROPOSE_COMPLETE_MARKER} but does not hand off to the other agent for review.",
+        )
     return ControlSignal("missing", speaker=speaker, detail="The latest entry does not end with @Codex or @Claude.")
+
+
+def _marker_text(line: str) -> str:
+    """A line with Markdown emphasis/code and trailing punctuation stripped."""
+    return line.strip().strip("*_`# ").rstrip(".!").strip("*_` ")
+
+
+def has_marker(content: str, marker: str) -> bool:
+    """True if ``marker`` appears as a whole line of its own (outside code fences).
+
+    Control markers must be exact lines so prose such as "the project is not
+    complete" or "don't write PROJECT COMPLETE yet" can never trigger them.
+    """
+    in_fence = False
+    for line in content.splitlines():
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and _marker_text(line) == marker:
+            return True
+    return False
 
 
 def get_latest_handoff(text: str) -> str | None:
@@ -189,16 +228,66 @@ def get_latest_handoff(text: str) -> str | None:
 
 
 def completion_was_reviewed(turns: list[ConversationTurn]) -> bool:
-    """PROJECT COMPLETE is only accepted from an agent answering the other agent's proposal."""
-    if len(turns) < 2:
+    """PROJECT COMPLETE is only accepted from an agent answering the other agent's proposal.
+
+    The previous *agent* entry (human interventions in between are allowed) must
+    be by the other agent and contain the exact ``PROPOSE PROJECT COMPLETE`` line.
+    """
+    if not turns or turns[-1].speaker not in AGENTS:
         return False
-    last, previous = turns[-1], turns[-2]
+    last = turns[-1]
+    previous = next((t for t in reversed(turns[:-1]) if t.speaker in AGENTS), None)
     return (
-        last.speaker in AGENTS
-        and previous.speaker in AGENTS
+        previous is not None
         and previous.speaker != last.speaker
-        and "complete" in previous.content.lower()
+        and has_marker(previous.content, PROPOSE_COMPLETE_MARKER)
     )
+
+
+def validate_append(before: str, after: str, agent: str) -> str | None:
+    """Check that an agent's turn only appended exactly one entry of its own.
+
+    Returns a human-readable problem description, or None if the change is valid.
+    Line-ending differences (CRLF/LF) and trailing whitespace at the old end of
+    the file are tolerated; any other change to earlier text is not.
+    """
+    old = before.replace("\r\n", "\n").rstrip()
+    new = after.replace("\r\n", "\n")
+    if not new.startswith(old):
+        new_stripped = new.rstrip()
+        if old.startswith(new_stripped):
+            kind = "truncated (earlier content was removed)"
+        else:
+            kind = "modified or replaced"
+        old_lines, new_lines = old.splitlines(), new.splitlines()
+        line = next(
+            (i + 1 for i, (a, b) in enumerate(zip(old_lines, new_lines)) if a != b),
+            min(len(old_lines), len(new_lines)) + 1,
+        )
+        return (
+            f"{agent} modified historical conversation content: conversation.md was {kind}, "
+            f"first difference at line {line}. conversation.md is append-only; agents may only add a new "
+            "entry at the end."
+        )
+
+    suffix = new[len(old):]
+    preamble = []
+    for text_line in suffix.splitlines():
+        if _HEADING_RE.match(text_line):
+            break
+        preamble.append(text_line)
+    stray = [t.strip() for t in preamble if t.strip() not in ("", "---", "***", "___")]
+    added = parse_conversation(suffix)
+    if not added:
+        return f"{agent} changed conversation.md without appending a '## {agent} — Turn N' entry."
+    if stray:
+        return f"{agent} appended text outside its entry heading: {stray[0][:80]!r}"
+    if len(added) > 1:
+        who = ", ".join(t.speaker for t in added)
+        return f"{agent} appended {len(added)} entries ({who}); exactly one entry of its own is allowed per turn."
+    if added[0].speaker != agent:
+        return f"{agent} appended an entry under the '## {added[0].speaker}' heading instead of its own."
+    return None
 
 
 def count_turns(turns: list[ConversationTurn], speaker: str) -> int:

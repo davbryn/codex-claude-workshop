@@ -160,6 +160,82 @@ def test_unavailable_executable_is_reported(qapp, wait, tmp_path):
     assert "Codex executable not found" in o.messages[-1][1]
 
 
+@pytest.mark.parametrize(
+    "behavior, expected",
+    [
+        ("edit-history", "modified historical conversation content"),
+        ("truncate", "truncated"),
+        ("replace", "modified or replaced"),
+        ("junk-append", "without appending"),
+        ("double-append", "2 entries"),
+    ],
+)
+def test_history_violations_pause_with_backup(qapp, wait, tmp_path, behavior, expected):
+    o = make(tmp_path, codex=behavior)
+    before = read_conversation(tmp_path / "conversation.md")
+    o.start()
+    assert wait(settled(o, orch.NEEDS_ATTENTION))
+    level, text = o.messages[-1]
+    assert level == "error" and expected in text, text
+    assert o.agent_states["Codex"] == orch.A_ERROR
+    assert [e[1] for e in o.events] == ["Codex"]  # Claude never started
+    backups = list(tmp_path.glob("conversation.before-codex-*.bak.md"))
+    assert len(backups) == 1 and backups[0].read_text(encoding="utf-8") == before
+    assert backups[0].name in text
+
+
+@pytest.mark.parametrize("agent", ["Codex", "Claude"])
+def test_live_self_handoff_pauses(qapp, wait, tmp_path, agent):
+    o = make(tmp_path, first=agent, **{agent.lower(): "self-handoff"})
+    o.start()
+    assert wait(settled(o, orch.NEEDS_ATTENTION))
+    assert "handed off to itself" in o.messages[-1][1]
+    assert len(o.events) == 1 and o.agent_states[agent] == orch.A_ERROR
+
+
+def resume_existing(tmp_path, extra: str) -> Orchestrator:
+    """An orchestrator opened on an existing conversation (Continue existing workshop)."""
+    o = make(tmp_path)
+    with (tmp_path / "conversation.md").open("a", encoding="utf-8") as f:
+        f.write(extra)
+    return o
+
+
+@pytest.mark.parametrize("agent", ["Codex", "Claude"])
+def test_resume_rejects_existing_self_handoff(qapp, wait, tmp_path, agent):
+    o = resume_existing(tmp_path, f"\n## {agent} — Turn 1\n\nStill mine.\n\n@{agent}\n\n---\n")
+    o.start()
+    assert not o.is_busy() and o.events == []
+    assert o.state == orch.NEEDS_ATTENTION
+    assert "Malformed handoff" in o.messages[-1][1] and f"@{agent}" in o.messages[-1][1]
+    o.resume()  # resuming again must still refuse
+    assert not o.is_busy() and o.events == []
+
+
+def test_resume_rejects_unreviewed_completion(qapp, tmp_path):
+    o = resume_existing(tmp_path, "\n## Codex — Turn 1\n\nThe project is not complete.\n\nPROJECT COMPLETE\n")
+    o.start()
+    assert o.state == orch.NEEDS_ATTENTION and "without the other agent reviewing" in o.messages[-1][1]
+
+
+def test_resume_accepts_reviewed_completion(qapp, tmp_path):
+    o = resume_existing(
+        tmp_path,
+        "\n## Codex — Turn 1\n\nDone.\n\nPROPOSE PROJECT COMPLETE\n\n@Claude\n\n---\n"
+        "\n## Claude — Turn 1\n\nVerified.\n\nPROJECT COMPLETE\n",
+    )
+    o.start()
+    assert o.state == orch.COMPLETE and o.events == []
+
+
+def test_resume_continues_valid_handoff(qapp, wait, tmp_path):
+    o = resume_existing(tmp_path, "\n## Codex — Turn 1\n\nOver to you.\n\n@Claude\n\n---\n")
+    o.start()
+    assert o.current_agent == "Claude"
+    o.stop()
+    assert wait(lambda: not o.is_busy())
+
+
 def test_prompt_contains_rules_personality_and_turn(tmp_path):
     from workshop.prompts import build_prompt
 

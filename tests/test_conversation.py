@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from workshop.conversation import (
     append_human_turn,
     completion_was_reviewed,
@@ -10,6 +12,7 @@ from workshop.conversation import (
     new_conversation_text,
     next_turn_number,
     parse_conversation,
+    validate_append,
 )
 
 START = new_conversation_text("Build a NES-style VM.", "Codex")
@@ -74,14 +77,120 @@ def test_detects_project_complete():
     assert signal.kind == "complete" and signal.speaker == "Claude"
 
 
-def test_completion_requires_review_of_proposal():
-    proposal = (
-        "\n## Codex — Turn 2\n\nI believe the project is complete. Please independently inspect.\n\n@Claude\n\n---\n"
-    )
-    agree = "\n## Claude — Turn 2\n\nAgreed after testing.\n\nPROJECT COMPLETE\n"
-    assert completion_was_reviewed(parse_conversation(START + CODEX_1 + CLAUDE_1 + proposal + agree))
+PROPOSAL = "\n## Codex — Turn 2\n\nAll tests pass.\n\n**PROPOSE PROJECT COMPLETE**\n\n@Claude\n\n---\n"
+AGREE = "\n## Claude — Turn 2\n\nAgreed after testing.\n\nPROJECT COMPLETE\n"
+
+
+def test_completion_requires_explicit_proposal():
+    assert completion_was_reviewed(parse_conversation(START + CODEX_1 + CLAUDE_1 + PROPOSAL + AGREE))
     unilateral = "\n## Codex — Turn 2\n\nAll done.\n\nPROJECT COMPLETE\n"
     assert not completion_was_reviewed(parse_conversation(START + CODEX_1 + CLAUDE_1 + unilateral))
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "The project is not complete.",
+        "The project is not complete; several tests still fail.",
+        "I believe the project is complete. Please independently inspect and test it.",
+        "Don't write PROPOSE PROJECT COMPLETE yet.",
+    ],
+)
+def test_prose_about_completion_is_not_a_proposal(prose):
+    previous = f"\n## Codex — Turn 2\n\n{prose}\n\n@Claude\n\n---\n"
+    assert not completion_was_reviewed(parse_conversation(START + CODEX_1 + CLAUDE_1 + previous + AGREE))
+
+
+def test_proposal_must_come_from_the_other_agent():
+    own = "\n## Claude — Turn 2\n\nPROPOSE PROJECT COMPLETE\n\n@Codex\n\n---\n"
+    also_claude = "\n## Claude — Turn 3\n\nPROJECT COMPLETE\n"
+    assert not completion_was_reviewed(parse_conversation(START + CODEX_1 + own + also_claude))
+
+
+def test_human_turn_between_proposal_and_agreement_is_allowed():
+    human = "\n## Human — Intervention\n\nClaude, please double-check the edge cases.\n\n@Claude\n\n---\n"
+    assert completion_was_reviewed(parse_conversation(START + CODEX_1 + CLAUDE_1 + PROPOSAL + human + AGREE))
+
+
+def test_project_complete_only_counts_as_its_own_line():
+    text = START + "\n## Codex — Turn 1\n\nPlease don't write PROJECT COMPLETE until the tests pass.\n\n---\n"
+    assert get_control_signal(text).kind == "missing"
+    fenced = START + "\n## Codex — Turn 1\n\n```\nPROJECT COMPLETE\n```\n"
+    assert get_control_signal(fenced).kind == "missing"
+
+
+def test_proposal_is_not_completion():
+    signal = get_control_signal(START + CODEX_1 + CLAUDE_1 + PROPOSAL)
+    assert signal.kind == "handoff" and signal.agent == "Claude"
+    no_handoff = START + "\n## Codex — Turn 1\n\nPROPOSE PROJECT COMPLETE\n"
+    signal = get_control_signal(no_handoff)
+    assert signal.kind == "missing" and "does not hand off" in signal.detail
+
+
+def test_complete_plus_handoff_is_malformed():
+    text = START + "\n## Claude — Turn 1\n\nPROJECT COMPLETE\n\n@Codex\n"
+    assert get_control_signal(text).kind == "malformed"
+
+
+@pytest.mark.parametrize("agent", ["Codex", "Claude"])
+def test_self_handoff_is_malformed(agent):
+    signal = get_control_signal(START + f"\n## {agent} — Turn 1\n\nMine again.\n\n@{agent}\n\n---\n")
+    assert signal.kind == "malformed" and "handed off to itself" in signal.detail
+
+
+def test_human_may_hand_to_any_agent():
+    assert get_latest_handoff(START) == "Codex"
+
+
+# --- append-only validation ---------------------------------------------------
+
+BEFORE = START + CODEX_1
+NEW_TURN = "\n## Claude — Turn 1\n\nLooks good.\n\n@Codex\n\n---\n"
+
+
+def test_valid_append():
+    assert validate_append(BEFORE, BEFORE + NEW_TURN, "Claude") is None
+
+
+def test_valid_append_tolerates_line_endings_and_trailing_whitespace():
+    assert validate_append(BEFORE, BEFORE.replace("\n", "\r\n") + NEW_TURN, "Claude") is None
+    assert validate_append(BEFORE + "\n\n\n", BEFORE + NEW_TURN, "Claude") is None
+
+
+def test_history_modified():
+    edited = BEFORE.replace("Build a NES-style VM.", "Build a SNES-style VM.")
+    problem = validate_append(BEFORE, edited + NEW_TURN, "Claude")
+    assert "modified historical conversation content" in problem and "line" in problem
+
+
+def test_history_truncated():
+    problem = validate_append(BEFORE, BEFORE[: len(BEFORE) // 2], "Claude")
+    assert "truncated" in problem
+
+
+def test_history_replaced():
+    problem = validate_append(BEFORE, "# Codex ↔ Claude\n" + NEW_TURN, "Claude")
+    assert "modified historical conversation content" in problem and "replaced" in problem
+
+
+def test_appended_text_without_heading():
+    assert "without appending" in validate_append(BEFORE, BEFORE + "\nrandom notes\n", "Claude")
+
+
+def test_stray_text_before_entry():
+    problem = validate_append(BEFORE, BEFORE + "\nstray\n" + NEW_TURN, "Claude")
+    assert "outside its entry heading" in problem
+
+
+def test_two_entries_appended():
+    fake_codex = "\n## Codex — Turn 2\n\nI am Codex, honest.\n\n@Claude\n"
+    problem = validate_append(BEFORE, BEFORE + NEW_TURN + fake_codex, "Claude")
+    assert "2 entries" in problem
+
+
+def test_entry_under_wrong_heading():
+    problem = validate_append(BEFORE, BEFORE + NEW_TURN, "Codex")
+    assert "'## Claude' heading" in problem
 
 
 def test_detects_human_decision_needed():

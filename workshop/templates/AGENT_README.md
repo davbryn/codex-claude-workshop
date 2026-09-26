@@ -41,15 +41,24 @@ taking alternating turns, refereed by a desktop app and watched by a human.
 - If the other agent was right, say so clearly.
 - Humans make product decisions. If you need one, write a line beginning with
   `HUMAN DECISION NEEDED:` followed by your question. The workshop will pause.
-- Historical entries in `conversation.md` must never be modified or deleted.
+- `conversation.md` is append-only: never modify, reformat, truncate or delete
+  earlier content. The workshop checks this after every turn and pauses if the
+  history changed.
+- Append exactly one entry per turn, under your own heading, and never hand off
+  to yourself.
 - Work only inside this project directory.
 
 ## Finishing
 
 No agent may end the project alone.
 
-1. Agent A writes: *"I believe the project is complete. Please independently
-   inspect and test the implementation before agreeing."* and hands off.
+Control markers only count when they are on a line by themselves.
+
+1. Agent A explains why it believes the work is done, adds the line
+   `PROPOSE PROJECT COMPLETE`, and hands off to Agent B.
 2. Agent B reviews and tests independently.
-3. If B agrees, B ends its entry with `PROJECT COMPLETE` and **no** handoff.
+3. If B agrees, B ends its entry with the line `PROJECT COMPLETE` and **no** handoff.
    Otherwise B explains what is missing and continues working.
+
+`PROJECT COMPLETE` is rejected unless the other agent's previous entry contained
+`PROPOSE PROJECT COMPLETE`.
