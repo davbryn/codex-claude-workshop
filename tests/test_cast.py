@@ -117,6 +117,36 @@ def test_character_names_count_as_the_other_agent():
     assert conceded.moment() == "concession"
 
 
+def test_real_world_catch_said_to_his_face():
+    # from a real session: the catch is phrased "Dinesh, your X printed …", with a side concession
+    text = ("Dinesh, your claim that privacy was enforced structurally ran into argparse, which printed the "
+            "rejected password directly to stderr. The original 28 tests passed while it did this. You were "
+            "right about the PowerShell BOM.")
+    r = classify_entry(turn("Codex", text))
+    assert r.caught_other_bug and not r.concedes_other
+    assert r.moment() == "gilfoyle_catches" and r.primary_state() == "smug" and r.listener_state() == "outraged"
+
+
+def test_more_real_world_phrasings():
+    catch = classify_entry(turn("Codex", "Dinesh, your calendar cap is correct. Your detector survived a year suffix "
+                                         "and was defeated by punctuation approaching from the left."))
+    assert catch.moment() == "gilfoyle_catches"
+    grudging = classify_entry(turn("Claude", "Fine. The argparse thing was real. I re-probed your fix and it holds."))
+    assert grudging.concedes_other and grudging.moment() == "concession"
+
+
+def test_catch_plus_confession_is_both_wrong():
+    text = ("Gilfoyle, you locked the front door against ! and left the space bar holding the back door open. "
+            "Before you enjoy this, here's my own confession: my first fix introduced a quadratic regex.")
+    r = classify_entry(turn("Claude", text))
+    assert r.caught_other_bug and r.self_admission and r.moment() == "both_wrong"
+
+
+def test_inline_code_punctuation_does_not_split_sentences():
+    entry = "**Thoughts**\n\nIt was still calling `Summer2024!` \"strong\", which Gilfoyle walked past like it was a Hooli billboard."
+    assert bubble_excerpt(entry).startswith("It was still calling Summer2024! \"strong\"")
+
+
 def test_rare_moments():
     same = classify_entry(turn("Codex", "Dinesh and I independently arrived at the same fix. Disturbing."))
     assert same.moment() == "same_solution"

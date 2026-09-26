@@ -66,11 +66,17 @@ def _looks_technical(sentence: str) -> bool:
     return bool(re.search(r"Traceback|File \".*\", line \d+|^\s*at \w|[{};]\s*$|^\$ |==>|:\d+:\d+", sentence))
 
 
+_PROTECT = {".": "", "!": "", "?": ""}
+
+
 def sentences(text: str) -> list[str]:
+    # punctuation inside `inline code` (e.g. `Summer2024!`) doesn't end a sentence
+    text = re.sub(r"`[^`\n]+`", lambda m: "".join(_PROTECT.get(c, c) for c in m.group(0)), text)
     plain = re.sub(r"\s+", " ", strip_markdown(text)).strip()
     if not plain:
         return []
-    return [s.strip() for s in _SENTENCE_SPLIT.split(plain) if s.strip()]
+    restore = str.maketrans({v: k for k, v in _PROTECT.items()})
+    return [s.strip().translate(restore) for s in _SENTENCE_SPLIT.split(plain) if s.strip()]
 
 
 def _take(parts: list[str], limit: int) -> str:
@@ -96,7 +102,8 @@ _KEYWORDS = re.compile(
     r"\b(?:you|your|you're|wrong|right|bug|actually|unfortunately|obviously|somehow|apparently|again|"
     r"of course|told you|welcome|concede|admit|correct|incorrect|nobody|never|interesting|weird|"
     r"ego|feelings|cry|kubernetes|factory|abstraction|minimal\w*|over-?engineer\w*|delet\w+|crash\w*|"
-    r"slower|faster|race condition|edge case|benchmark\w*|lines)\b", re.I)
+    r"slower|faster|race condition|edge case|benchmark\w*|lines|hooli|pied piper|like it was|like a|like an)\b",
+    re.I)
 _NAMES = re.compile(r"\b(?:gilfoyle|dinesh|codex|claude)\b", re.I)
 _BOILERPLATE = re.compile(
     r"^(?:i )?(?:read|ran|re-ran|reviewed|created|added|updated|inspected|checked|opened|looked at|implemented|"

@@ -58,10 +58,14 @@ SELF_ADMIT_RX = _rx(
     r"mea culpa",
     r"i broke",
     r"i (?:was|am) (?:the one )?(?:wrong|mistaken)",
+    r"my (?:first |own |earlier |previous |last |original )?(?:fix|change|patch|attempt|version|regex) "
+    r"(?:introduced|broke|caused|was wrong)",
+    r"here'?s my (?:own )?confession",
 )
 CONCEDE_RX = re.compile(
     r"\b(?:" + ANY_NAME + r" (?:was|is) (?:right|correct)|you'?re right|you were right|good catch|fair point|"
     r"nice catch|i concede|(?:he|she|they) (?:was|is|were|are) (?:right|correct)|"
+    r"(?:the |that |your |his )?[\w-]+ (?:thing|point|catch|bug|issue|leak) was (?:real|valid|legit\w*|fair)|"
     + ANY_NAME + r" (?:found|caught|spotted) (?:a|an|the|my) (?:actual |real |genuine )?(?:bug|mistake|problem|race)|"
     + ANY_NAME + r"'?s (?:version|approach|solution) is (?:better|cleaner|faster))\b",
     re.I,
@@ -254,6 +258,20 @@ def classify_entry(turn: ConversationTurn, other: str | None = None) -> EntryRea
         prose,
         re.I,
     )
+    # real agents mostly say it to his face: "Dinesh, your claim … printed the password to stderr"
+    if not others_bug and r.mentions_other:
+        others_bug = re.search(
+            r"\byour (?:[\w-]+,? ){0,12}(?:printed|prints|leaked|leaks|exposed|exposes|crashes|crashed|breaks|broke|"
+            r"fails|failed|ignored|ignores|missed|misses|dropped|drops|corrupted|corrupts|returns an empty|"
+            r"was defeated|was fooled|was bypassed|still scored|still rates|still returns|still calls)\b",
+            prose, re.I)
+    if not others_bug and r.mentions_other:
+        # "You locked the front door … and left the space bar holding the back door open."
+        others_bug = re.search(r"\byou [^.;]{0,60}?\b(?:left|forgot|missed|broke|introduced|overlooked)\b"
+                               r"|\bi'?m not signing\b|\bisn'?t done\b", prose, re.I)
+    # "You were right about X" alongside a catch is a footnote, not the headline
+    if others_bug and r.concedes_other and not r.self_admission:
+        r.concedes_other = False
     # "Dinesh found an actual bug" is the speaker conceding, not the speaker catching one.
     other_found_mine = re.search(rf"\b{other_rx} (?:found|caught|spotted)\b", prose, re.I)
     r.caught_other_bug = not other_found_mine and (bool(others_bug) or (
