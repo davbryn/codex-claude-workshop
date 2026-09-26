@@ -227,3 +227,98 @@ DEMO_FILES: dict[tuple[int, str], str | None] = {
     (4, "shortener.py"): SHORTENER_V4,
     (6, "test_shortener.py"): TESTS_V4,
 }
+
+
+# --- the demo's kanban board: (start of turn, mid-turn, end of turn) per turn ---------
+
+def _board(todo, doing, done, asides) -> str:
+    def section(name, items):
+        return f"## {name}\n" + "".join(f"- {item}\n" for item in items) + "\n"
+    return ("# Kanban\n\n<!-- Set up by management (Jared) so everyone can see progress at a glance. "
+            "Please keep it current! -->\n\n" + section("To do", todo) + section("Doing", doing)
+            + section("Done", done) + "## Asides\n" + "".join(f"- {a}\n" for a in asides))
+
+
+_JARED = 'Read the brief together (Gilfoyle, Dinesh) — "Synergy starts with a shared understanding! — Jared"'
+_A = []  # asides accumulate over the episode
+
+
+def _asides(*new):
+    _A.extend(new)
+    return list(_A)
+
+
+DEMO_KANBAN: dict[int, tuple[str, str | None, str]] = {}
+DEMO_KANBAN[0] = (
+    _board([_JARED], ['Build the URL shortener (Dinesh) — "Jared made us a kanban. I will use it properly, since one of us has to."'], [], _asides()),
+    _board([_JARED], ['Build the URL shortener (Dinesh) — "Jared made us a kanban. I will use it properly, since one of us has to."'], [],
+           _asides("Dinesh: Six tests, all green. Screenshot this, Jared.")),
+    _board(["Review the architecture (Gilfoyle)"], [],
+           ['Build the URL shortener (Dinesh) — "Pluggable backends, a factory and a registry. You are welcome, future us."', _JARED.replace(" (Gilfoyle, Dinesh)", " (Gilfoyle, Dinesh)")],
+           list(_A)),
+)
+DEMO_KANBAN[1] = (
+    _board([], ['Review the architecture (Gilfoyle) — "Reviewing is a strong word. Deleting is the word."'],
+           ['Build the URL shortener (Dinesh) — "Pluggable backends, a factory and a registry. You are welcome, future us."'],
+           _asides("Gilfoyle: I have been assigned work by a kanban board. This is how civilisations end.")),
+    None,
+    _board(["Check edge cases (Dinesh)"], [],
+           ['Delete the plugin registry (Gilfoyle) — "It had no plugins. Now it has no registry. Balance."',
+            'Build the URL shortener (Dinesh) — "Pluggable backends, a factory and a registry. You are welcome, future us."'],
+           list(_A)),
+)
+DEMO_KANBAN[2] = (
+    _board([], ['Check edge cases (Dinesh) — "Checking all 31 of Gilfoyle\'s lines. Should take 31 seconds."'],
+           ['Delete the plugin registry (Gilfoyle) — "It had no plugins. Now it has no registry. Balance."'], list(_A)),
+    _board([], ['Check edge cases (Dinesh) — "Checking all 31 of Gilfoyle\'s lines. Should take 31 seconds."'],
+           ['Delete the plugin registry (Gilfoyle) — "It had no plugins. Now it has no registry. Balance."'],
+           _asides("Dinesh: Oh no. Oh YES. encode(0) returns nothing. The first link goes nowhere.")),
+    _board(["Fix encode(0) (Gilfoyle)"], [],
+           ['Found the encode(0) bug (Dinesh) — "Leaving the fix for him. It is a growth opportunity."',
+            'Add an LRU cache to resolve (Dinesh) — "Lookups at scale."'], list(_A)),
+)
+DEMO_KANBAN[3] = (
+    _board([], ['Fix encode(0) (Gilfoyle) — "A one-line fix, and a card for it. Jared must be thrilled."'],
+           ['Found the encode(0) bug (Dinesh) — "Leaving the fix for him. It is a growth opportunity."',
+            'Add an LRU cache to resolve (Dinesh) — "Lookups at scale."'], list(_A)),
+    _board([], ['Fix encode(0) (Gilfoyle) — "A one-line fix, and a card for it. Jared must be thrilled."'],
+           ['Add an LRU cache to resolve (Dinesh) — "Lookups at scale."'],
+           _asides("Gilfoyle: He put a cache in front of a dictionary. The dictionary is the cache.")),
+    _board(["Prove the cache helps (Dinesh)"], [],
+           ['Fix encode(0) (Gilfoyle) — "Fixed. Please stop dragging it back to Doing, Dinesh."',
+            'Add an LRU cache to resolve (Dinesh) — "Lookups at scale."'], list(_A)),
+)
+DEMO_KANBAN[4] = (
+    _board([], ['Prove the cache helps (Dinesh) — "Benchmark incoming. Prepare to be humbled."'],
+           ['Fix encode(0) (Gilfoyle) — "Fixed. Please stop dragging it back to Doing, Dinesh."'], list(_A)),
+    _board([], ['Prove the cache helps (Dinesh) — "Benchmark incoming. Prepare to be humbled."'],
+           ['Fix encode(0) (Gilfoyle) — "Fixed. Please stop dragging it back to Doing, Dinesh."'],
+           _asides("Dinesh: The numbers are… loading. They are loading wrong.")),
+    _board(["Review the benchmark (Gilfoyle)"], [],
+           ['Remove the LRU cache (Dinesh) — "Nobody say anything."',
+            'Fix encode(0) (Gilfoyle) — "Fixed. Please stop dragging it back to Doing, Dinesh."'], list(_A)),
+)
+DEMO_KANBAN[5] = (
+    _board([], ['Review the benchmark (Gilfoyle) — "I would like to frame this card."'],
+           ['Remove the LRU cache (Dinesh) — "Nobody say anything."'], list(_A)),
+    None,
+    _board(["Decide on case-sensitive codes (Management)"], [],
+           ['Review the benchmark (Gilfoyle) — "Escalated to management. Jared will love that there is a card."',
+            'Remove the LRU cache (Dinesh) — "Nobody say anything."'], list(_A)),
+)
+DEMO_KANBAN[6] = (
+    _board([], ['Case-sensitivity tests (Dinesh) — "Management has spoken, and I am a team player."'],
+           ['Review the benchmark (Gilfoyle) — "Escalated to management. Jared will love that there is a card."'], list(_A)),
+    None,
+    _board(["Final review (Gilfoyle)"], [],
+           ['Case-sensitivity tests (Dinesh) — "Proposing completion. Nobody touch the board."',
+            'Review the benchmark (Gilfoyle) — "Escalated to management. Jared will love that there is a card."'], list(_A)),
+)
+DEMO_KANBAN[7] = (
+    _board([], ['Final review (Gilfoyle) — "Reviewing. Silently."'],
+           ['Case-sensitivity tests (Dinesh) — "Proposing completion. Nobody touch the board."'], list(_A)),
+    None,
+    _board([], [],
+           ['Final review (Gilfoyle) — "Everything is in Done. Jared can finally sleep."',
+            'Case-sensitivity tests (Dinesh) — "Proposing completion. Nobody touch the board."'], list(_A)),
+)

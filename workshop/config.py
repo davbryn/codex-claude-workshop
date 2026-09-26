@@ -53,6 +53,7 @@ class Settings:
     petty_scoreboard: bool = True
     comic_timing: bool = True
     camera_cuts: bool = True  # cut to the working agent's monitor, full-size
+    kanban_enabled: bool = True  # management's shared KANBAN.md, with asides spoken while they work
     theme_version: int = THEME_VERSION
 
     @classmethod

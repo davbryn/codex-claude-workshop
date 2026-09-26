@@ -172,6 +172,21 @@ window. He stays in a live inset in the corner, with the other one in a smaller
 for the boss walking in, and briefly for test results so you see the reaction. You can
 turn this off in Settings → Appearance.
 
+**Management's kanban board.** When a workshop starts, "management" (Jared) creates a
+shared `KANBAN.md` in the project, and the stage shows it arriving. Both agents are told
+management insists on it; their opinions of that are their own. Every turn, each one:
+* moves his card to *Doing* with a one-line in-character aside,
+* moves it to *Done* with another aside when he finishes,
+* may add up to two asides while working.
+
+Whenever the board changes, it appears on his monitor with the moved card highlighted,
+and **the asides are read aloud** in his voice (subtitled in the close-up). That fills
+the silence while the CLIs work, and every word is the agent's own. Only the working
+agent's asides as himself are spoken; a line written "as" the other one is ignored.
+Asides still pending when he delivers his entry play right after it, as a tag. The board
+is planning and presentation only: `conversation.md` remains the protocol. It can be
+switched off in Settings → The Cast.
+
 **Usage limits.** When Claude or Codex runs out of usage mid-turn, the workshop treats
 it as a pause, not a crash. The card shows who is out and when the limit resets
 (Claude reports the exact time). The workshop then resumes automatically a minute

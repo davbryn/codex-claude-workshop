@@ -69,3 +69,27 @@ def test_director_shows_files_only_inside_the_project(qapp, tmp_path):
     d._on_output_line("Codex", f'"powershell.exe" -Command "Get-Content {outside}"')
     assert d.screens["Codex"].mode == "terminal"  # the command shows; the outside file does not
     d.shutdown()
+
+
+def test_prompt_echo_is_not_shown_as_command_output(qapp, tmp_path):
+    from workshop.agents.fake import FakeAdapter
+    from workshop.orchestrator import Orchestrator
+    from workshop.project import ensure_protocol_file, start_new_conversation
+    from workshop.theatre.director import Director
+    from workshop.theatre.sfx import SoundEffects
+    from workshop.theatre.speech import NullSpeechEngine
+    from workshop.ui.stage import StageWidget
+
+    ensure_protocol_file(tmp_path)
+    start_new_conversation(tmp_path, "x", "Codex")
+    o = Orchestrator(tmp_path, {a: FakeAdapter(a) for a in ("Codex", "Claude")}, {})
+    d = Director(o, StageWidget(), NullSpeechEngine(), SoundEffects(False))
+    d.on_turn_started("Codex", 1)
+    for line in ("OpenAI Codex v0.47", "user", "[CORE WORKSHOP RULES]", "The very last non-empty line…"):
+        d._on_output_line("Codex", line)
+    assert all(kind != "out" for kind, _ in d.screens["Codex"].lines)  # Codex echoing its prompt stays off screen
+    d._on_output_line("Codex", "exec")
+    d._on_output_line("Codex", '"powershell.exe" -Command "python -m pytest -q"')
+    d._on_output_line("Codex", "3 passed in 0.02s")
+    assert list(d.screens["Codex"].lines)[-1] == ("out", "3 passed in 0.02s")
+    d.shutdown()

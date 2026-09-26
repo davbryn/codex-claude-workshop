@@ -58,6 +58,9 @@ class SettingsDialog(QDialog):
         self.scoreboard = QCheckBox("Show the PETTY SCOREBOARD (deliberately unserious)")
         self.scoreboard.setChecked(settings.petty_scoreboard)
         cform.addRow(self.scoreboard)
+        self.kanban = QCheckBox("Shared kanban board from management (KANBAN.md); their asides on it are read aloud")
+        self.kanban.setChecked(settings.kanban_enabled)
+        cform.addRow(self.kanban)
         self.timing = QCheckBox("Comic timing: short reaction beats between lines (under a second)")
         self.timing.setChecked(settings.comic_timing)
         cform.addRow(self.timing)
@@ -236,6 +239,7 @@ class SettingsDialog(QDialog):
         s.hostility = self.hostility.currentText()
         s.petty_scoreboard = self.scoreboard.isChecked()
         s.comic_timing = self.timing.isChecked()
+        s.kanban_enabled = self.kanban.isChecked()
         if self.preset.currentText() != CUSTOM:
             s.last_preset = self.preset.currentText()
         s.codex_personality = self.codex_text.toPlainText()

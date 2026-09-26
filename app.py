@@ -83,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.fake_delay is None:
         args.fake_delay = 1.6
     protocol_file = ensure_protocol_file(setup.project_dir)
+    if settings.kanban_enabled:
+        from workshop.kanban import ensure_board
+
+        ensure_board(setup.project_dir)  # management insists
     if not setup.continue_existing:
         start_new_conversation(setup.project_dir, setup.prompt, setup.first_agent)
 

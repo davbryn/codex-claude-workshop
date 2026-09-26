@@ -61,7 +61,10 @@ def test_prompt_theatre_follows_live_settings():
     assert "you are GILFOYLE" in build("Codex", text)
     settings.hostility = "Civil"
     assert "CIVIL" in build("Codex", text)
+    assert "[SHARED KANBAN BOARD]" in build("Codex", text) and "(Gilfoyle)" in build("Codex", text)
     settings.cast_enabled = False
+    assert "GILFOYLE" not in build("Codex", text) and "(Codex)" in build("Codex", text)  # board, no cast
+    settings.kanban_enabled = False
     assert build("Codex", text) == ""
 
 
@@ -146,6 +149,13 @@ def test_that_makes_it_your_bug():
     r = classify_entry(turn("Claude", "Gilfoyle, a typo like Bob:1_0 silently gives Bob a weight of 10. That shipped in "
                                       "Turn 1, which makes it your bug."))
     assert r.caught_other_bug and r.moment() == "dinesh_catches"
+
+
+def test_uncaught_traceback_catch():
+    r = classify_entry(turn("Codex", "Dinesh, your two-pass scorer is correct. Your CLI, meanwhile, treated a missing "
+                                     "dictionary as an invitation to exhibit its internal organs: an uncaught "
+                                     "traceback instead of an argument error."))
+    assert r.caught_other_bug and r.moment() == "gilfoyle_catches"
 
 
 def test_third_person_catch():

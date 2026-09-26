@@ -271,6 +271,9 @@ def classify_entry(turn: ConversationTurn, other: str | None = None) -> EntryRea
         others_bug = re.search(r"\byou [^.;]{0,60}?\b(?:left|forgot|missed|broke|introduced|overlooked)\b"
                                r"|\bi'?m not signing\b|\bisn'?t done\b"
                                r"|\b(?:makes it|that'?s|it'?s|this is|which is) your (?:bug|mistake|regression|fault)\b"
+                               # "Your CLI, meanwhile, treated a missing file as … an uncaught traceback"
+                               r"|\byour [^.]{0,120}?\b(?:uncaught|unhandled) (?:traceback|exception|error)"
+                               r"|\byour [^.]{0,80}?\btraceback instead\b"
                                # "His proposed cumulative bound, however, does not survive …"
                                r"|\b(?:his|your) [\w\s,-]{0,50}?\b(?:does not|doesn'?t|did not|didn'?t|cannot|can'?t) "
                                r"(?:survive|hold|work|scale|handle)\b",

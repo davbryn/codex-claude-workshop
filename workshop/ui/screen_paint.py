@@ -44,6 +44,8 @@ def render_screen(feed: ScreenFeed | None, agent: str, t: float, active: bool, w
         _paint_blank(p, W, H, agent, t)
     elif feed.mode == "idle" and feed.page is not None:
         _paint_browser(p, W, H, feed, t)
+    elif feed.mode == "kanban" and feed.board is not None:
+        _paint_kanban(p, W, H, feed, t)
     elif feed.mode == "terminal":
         _paint_terminal(p, W, H, feed, agent, t)
     elif feed.mode in ("editor", "reader"):
@@ -150,6 +152,74 @@ def _paint_terminal(p: QPainter, W: int, H: int, feed: ScreenFeed, agent: str, t
     if int(t * 2) % 2 == 0:
         p.setPen(QColor(ACCENT[agent]))
         p.drawText(QPointF(6, min(H - 4, y + lh - 4)), "█")
+
+
+OWNER_COLOUR = {"gilfoyle": "#e0564b", "codex": "#e0564b", "dinesh": "#6f9dff", "claude": "#6f9dff"}
+
+
+def _paint_kanban(p: QPainter, W: int, H: int, feed: ScreenFeed, t: float) -> None:
+    board = feed.board
+    p.fillRect(QRectF(0, 0, W, H), QColor("#eef0f3"))
+    p.fillRect(QRectF(0, 0, W, 22), QColor("#2f3a4b"))
+    p.setFont(_font(12, bold=True, family="Segoe UI"))
+    p.setPen(QColor("#ffffff"))
+    p.drawText(QRectF(8, 0, W - 16, 22), Qt.AlignmentFlag.AlignVCenter, "📋 KANBAN.md · shared board (courtesy of management)")
+    asides = board.asides[-2:]
+    foot = 18 * len(asides) + (6 if asides else 0)
+    gap = 6
+    col_w = (W - gap * 4) / 3
+    top = 28
+    for i, column in enumerate(("To do", "Doing", "Done")):
+        x = gap + i * (col_w + gap)
+        rect = QRectF(x, top, col_w, H - top - foot - 6)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#dfe3e9"))
+        p.drawRoundedRect(rect, 5, 5)
+        cards = board.columns.get(column, [])
+        p.setFont(_font(11.5, bold=True, family="Segoe UI"))
+        p.setPen(QColor("#44505f"))
+        p.drawText(QRectF(x + 6, top + 2, col_w - 12, 16), Qt.AlignmentFlag.AlignVCenter,
+                   f"{column.upper()}  {len(cards)}")
+        y = top + 20
+        title_font = _font(11.5, family="Segoe UI")
+        aside_font = _font(10.5, family="Segoe UI")
+        aside_font.setItalic(True)
+        fm_t, fm_a = QFontMetricsF(title_font), QFontMetricsF(aside_font)
+        for card in cards[-7:]:
+            text_w = col_w - 16
+            title_rect = fm_t.boundingRect(QRectF(0, 0, text_w, 60), int(Qt.TextFlag.TextWordWrap), card.title)
+            title_h = min(title_rect.height(), fm_t.height() * 2 + 2)
+            aside_h = fm_a.height() + 2 if card.aside else 0
+            h = title_h + aside_h + 10
+            if y + h > rect.bottom() - 2:
+                break
+            box = QRectF(x + 4, y, col_w - 8, h)
+            hot = card.title in feed.highlight
+            p.setPen(QPen(QColor("#f2c14e"), 2.2) if hot else QPen(QColor("#c9ced6"), 1))
+            p.setBrush(QColor("#fffbe8") if hot else QColor("#ffffff"))
+            p.drawRoundedRect(box, 4, 4)
+            owner = card.owner.split(",")[0].strip().lower()
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(OWNER_COLOUR.get(owner, "#9aa3ae")))
+            p.drawRect(QRectF(box.left(), box.top() + 3, 3, box.height() - 6))
+            p.setFont(title_font)
+            p.setPen(QColor("#1f2530"))
+            p.drawText(QRectF(box.left() + 8, box.top() + 4, text_w, title_h), int(Qt.TextFlag.TextWordWrap), card.title)
+            if card.aside:
+                p.setFont(aside_font)
+                p.setPen(QColor("#6a7383"))
+                p.drawText(QPointF(box.left() + 8, box.top() + 4 + title_h + fm_a.ascent()),
+                           _elide(fm_a, f"“{card.aside}”", text_w))
+            y += h + 4
+    if asides:
+        p.setFont(_font(11, family="Segoe UI"))
+        fm = QFontMetricsF(p.font())
+        y = H - foot
+        for name, text in asides:
+            colour = OWNER_COLOUR.get(name.lower(), "#44505f")
+            p.setPen(QColor(colour))
+            p.drawText(QPointF(8, y + fm.ascent()), _elide(fm, f"{name}: “{text}”", W - 16))
+            y += 18
 
 
 def _paint_browser(p: QPainter, W: int, H: int, feed: ScreenFeed, t: float) -> None:

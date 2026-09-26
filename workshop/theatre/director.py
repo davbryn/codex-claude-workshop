@@ -23,11 +23,12 @@ from ..orchestrator import Orchestrator, other_agent
 from .banter import petty_scoreboard
 from .cast import COMPLETE_FOOTER, COMPLETE_TAGLINE, MOMENTS, SMALL_LABELS, character, status_label
 from .reactions import ActivityTracker, EntryReaction, asks_for_review, classify_entry
+from ..kanban import moved_cards, new_asides, read_board
 from .screens import ProjectDiffer, ScreenFeed, _read_text
 from .sfx import SoundEffects
 from .speech import SpeechEngine
 from .stats import RunStats, completion_lines, summarise_conversation
-from .text import bubble_excerpt, speech_text, strip_markdown
+from .text import bubble_excerpt, clean_for_speech, speech_text, strip_markdown
 
 READ_TARGET = re.compile(r"^(?:cat|type|Get-Content|gc|less|more|head|tail)\s+(?:-\w+\s+\S+\s+)*[\"']?([^\s\"';|]+)", re.I)
 
@@ -121,6 +122,13 @@ class Director(QObject):
         self._last_cut = 0.0
         self._turn_began = 0.0
         self._diff_agent: str | None = None
+        # management's kanban board, and the asides the agents write on it (spoken while they work)
+        self.kanban = True
+        self._board = read_board(orchestrator.project_dir)
+        self._board_text = None
+        self._mutters: deque = deque(maxlen=4)
+        self._muttering: str | None = None
+        self._mutter_live = False
 
         self._end_timer = QTimer(self)
         self._end_timer.setSingleShot(True)
@@ -241,6 +249,8 @@ class Director(QObject):
         # until an agent performance is playing (or the queue is empty).
         while self.current is None and self.queue and not self._gap_timer.isActive():
             self._play(self.queue.popleft())
+        if self.current is None and not self.queue and not self._gap_timer.isActive():
+            self._next_mutter()
         if self.presentation_idle():
             callbacks, self._idle_callbacks = self._idle_callbacks, []
             for callback in callbacks:
@@ -248,7 +258,8 @@ class Director(QObject):
 
     def presentation_idle(self) -> bool:
         """True when no entry is being performed or waiting to be (used as a launch gate)."""
-        return self.current is None and not self.queue and not self._gap_timer.isActive()
+        return (self.current is None and not self.queue and not self._gap_timer.isActive()
+                and not self._muttering and not self._mutters)
 
     def _after_idle(self, callback) -> None:
         if self.presentation_idle():
@@ -271,6 +282,9 @@ class Director(QObject):
                 m.react(primary)
             return
 
+        # silence any aside first: stopping the voice emits "finished", which must not end this new line.
+        # Asides still waiting get their moment right after this line (a sardonic tag), not dropped.
+        self._interrupt_mutter()
         self.current = perf
         self._to_room()
         if om.base == "sleeping":
@@ -356,9 +370,25 @@ class Director(QObject):
             else:
                 m.react("worried" if stern else "surprised", 3.0 if stern else 1.4)
         self._sfx("human")
+        if start and self.kanban and self._board is not None:
+            QTimer.singleShot(5900, self._show_kanban_arrival)
         if not start:
             # everyone stops for a moment; the next line (and the next launch) waits for it
             self._gap_timer.start(2600)
+
+    def _show_kanban_arrival(self) -> None:
+        """Management (Jared) has set up a kanban board. The characters' opinions follow, in their own words."""
+        board = self._board
+        todo = len(board.columns.get("To do", [])) if board else 0
+        self.stage.show_card("human", "📌 MANAGEMENT HAS SET UP A KANBAN BOARD",
+                             ["KANBAN.md  ·  To do / Doing / Done / Asides", f"{todo} card{'s' if todo != 1 else ''} waiting",
+                              "“Please keep it current!” — Jared"], "#7bd88f", duration=5.0,
+                             footer="Asides on the board are read aloud while they work")
+        for agent in AGENTS:
+            m = self.stage.models[agent]
+            m.look_at_human(4.0)
+            m.react("stare" if m.deadpan else "worried", 3.5)
+        self._sfx("human")
 
     def _effects_at_start(self, agent: str, other: str, r: EntryReaction | None) -> None:
         if r is None:
@@ -400,15 +430,24 @@ class Director(QObject):
         """Live loudness for the talking character (None → synthetic mouth)."""
         if self._voice_live and self.current and self.current.turn.speaker == agent:
             return self.speech.level()
+        if self._mutter_live and self._muttering == agent:
+            return self.speech.level()
         return None
 
     def _on_speech_started(self, agent: str) -> None:
+        if self._muttering == agent and self.current is None:
+            self._mutter_live = True
+            self.stage.models[agent].set_talking(True)
+            return
         if self.current and self.current.turn.speaker == agent:
             self._voice_live = True
             if self.current.delivered:  # the line is on screen: open the mouth with the audio
                 self.stage.models[agent].set_talking(True)
 
     def _on_speech_finished(self, agent: str) -> None:
+        if self._muttering == agent and self.current is None:
+            self._end_mutter()
+            return
         self._voice_live = False
         if self.current and self.current.turn.speaker == agent:
             self._end_performance()
@@ -473,11 +512,13 @@ class Director(QObject):
         self._diff_agent = agent
         try:
             self.differ.baseline()  # anything that changes from here on is this agent's doing
+            self._poll_board(speak=False)  # edits made between turns aren't his to voice
         except OSError:
             pass
         self._diff_timer.start(max(1200, int(self.differ.last_scan_seconds * 8000)))
         feed = self.screens[agent]
         feed.command("# reading conversation.md")
+        feed.narrate()  # the CLI echoes its prompt first: only real commands' output goes on screen
         self._turn_began = time.monotonic()
         self.stats_changed.emit()
 
@@ -590,7 +631,85 @@ class Director(QObject):
         for line in text.splitlines() or [text]:
             self._on_output_line(agent, line)
 
+    # -- the kanban board and its asides ------------------------------------------------
+
+    def _poll_board(self, speak: bool = True) -> None:
+        if not self.kanban:
+            return
+        path = self.o.project_dir / "KANBAN.md"
+        try:
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            return
+        if text == self._board_text:
+            return
+        self._board_text = text
+        board = read_board(self.o.project_dir)
+        if board is None:
+            return
+        old, self._board = self._board, board
+        agent = self._diff_agent
+        if agent is None or not speak:
+            return
+        names = {a: (a, character(a)) for a in AGENTS}
+        # only the agent whose turn it is can be editing the board: never voice lines "for" the other one
+        asides = [a for a in new_asides(old, board, names) if a.speaker == agent]
+        moved = [c.title for c in moved_cards(old, board)]
+        if moved or asides:
+            self.screens[agent].show_board(board, tuple(moved) + tuple(a.card for a in asides if a.card))
+        for aside in asides[-3:]:
+            self._mutters.append(aside)
+        self._next_mutter()
+
+    def _next_mutter(self) -> None:
+        if self._muttering or not self._mutters or self.current is not None or self.queue:
+            return
+        aside = self._mutters.popleft()
+        agent = aside.speaker
+        self._muttering = agent
+        text = aside.text
+        if self.stage.shot_agent == agent:
+            self.stage.set_caption(agent, text)
+        else:
+            self.stage.show_speech(agent, f"“{text}”", mode="typewriter")
+        m = self.stage.models[agent]
+        m.look_at_other(2.0) if self.rivalry and re.search(r"(?i)gilfoyle|dinesh|codex|claude", text) else None
+        spoken = self.speaking_allowed() and self.speech.speak(agent, clean_for_speech(text))
+        if not spoken:  # silent: animate the line for a reading-length beat
+            m.set_talking(True)
+            QTimer.singleShot(int(max(1.8, min(6.0, len(text) / 15)) * 1000), self._end_mutter)
+
+    def _end_mutter(self) -> None:
+        agent, self._muttering = self._muttering, None
+        self._mutter_live = False
+        if agent and self.current is None:
+            self.stage.models[agent].set_talking(False)
+        QTimer.singleShot(1500, lambda: self.stage.set_caption(None, ""))
+        QTimer.singleShot(700, self._next_performance)  # more asides, or let the next agent start
+
+    def _interrupt_mutter(self) -> None:
+        while len(self._mutters) > 2:
+            self._mutters.popleft()
+        if self._muttering:
+            agent = self._muttering
+            self._muttering = None
+            self._mutter_live = False
+            self.speech.stop()
+            self.stage.models[agent].set_talking(False)
+        self.stage.set_caption(None, "")
+
+    def _stop_mutter(self) -> None:
+        self._mutters.clear()
+        if self._muttering:
+            agent = self._muttering
+            self._muttering = None
+            self._mutter_live = False
+            self.speech.stop()
+            self.stage.models[agent].set_talking(False)
+        self.stage.set_caption(None, "")
+
     def _poll_diffs(self) -> None:
+        self._poll_board()
         agent = self._diff_agent
         if agent is None:
             return

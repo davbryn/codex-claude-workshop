@@ -151,9 +151,19 @@ def make_prompt_theatre(settings):
     from .cast import theatre_block
 
     def build(agent: str, conversation_text: str) -> str:
-        if not getattr(settings, "cast_enabled", True):
-            return ""
-        callbacks = callbacks_for(agent, extract_callbacks(parse_conversation(conversation_text)))
-        return theatre_block(agent, getattr(settings, "hostility", ""), callbacks)
+        from ..kanban import prompt_block
+        from .cast import CHARACTER
+
+        other = "Claude" if agent == "Codex" else "Codex"
+        cast = getattr(settings, "cast_enabled", True)
+        parts = []
+        if cast:
+            callbacks = callbacks_for(agent, extract_callbacks(parse_conversation(conversation_text)))
+            parts.append(theatre_block(agent, getattr(settings, "hostility", ""), callbacks))
+        if getattr(settings, "kanban_enabled", False):
+            me_name = CHARACTER[agent] if cast else agent
+            other_name = CHARACTER[other] if cast else other
+            parts.append(prompt_block(agent, other, me_name, other_name))
+        return "\n\n".join(parts)
 
     return build

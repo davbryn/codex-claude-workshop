@@ -25,7 +25,7 @@ from pathlib import Path
 IGNORE_DIRS = {".git", ".hg", ".svn", ".venv", "venv", "env", "node_modules", "__pycache__", ".pytest_cache",
                ".mypy_cache", ".ruff_cache", ".tox", ".nox", ".workshop", "dist", "build", ".idea", ".vscode",
                "target", ".next", ".cache"}
-IGNORE_FILES = {"conversation.md", "AGENT_README.md"}
+IGNORE_FILES = {"conversation.md", "AGENT_README.md", "KANBAN.md"}
 MAX_FILE_BYTES = 256_000
 MAX_FILES = 2500
 MAX_CACHE_BYTES = 24_000_000
@@ -100,7 +100,10 @@ class ProjectDiffer:
             except OSError:
                 continue
             old_meta = self._meta.get(rel)
-            if old_meta == (st.st_mtime, st.st_size):
+            # An edit that keeps the size within one timestamp tick looks unchanged, so recently
+            # touched files are always re-read and compared.
+            recent = time.time() - st.st_mtime < 3.0
+            if old_meta == (st.st_mtime, st.st_size) and not recent:
                 continue
             self._meta[rel] = (st.st_mtime, st.st_size)
             new = _read_text(full)
@@ -159,6 +162,8 @@ class ScreenFeed:
     page: Page | None = None
     page_since: float = 0.0
     capture_output: bool = False
+    board: object = None
+    highlight: tuple = ()
 
     def _touch(self, mode: str, title: str | None = None) -> None:
         if mode != self.mode or (title is not None and title != self.title):
@@ -200,6 +205,13 @@ class ScreenFeed:
     def read(self, path: str, lines: list[str]) -> None:
         self._touch("reader", path)
         self._add_batch([("code", ln) for ln in lines])
+        self.capture_output = False
+
+    def show_board(self, board, highlight: tuple[str, ...] = ()) -> None:
+        """The shared kanban board (it shows on whoever is working's monitor)."""
+        self._touch("kanban", "KANBAN.md")
+        self.board = board
+        self.highlight = tuple(highlight)
         self.capture_output = False
 
     def narrate(self) -> None:

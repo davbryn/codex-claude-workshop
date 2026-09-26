@@ -75,7 +75,7 @@ def _apply_demo_file(root: Path, path: str, content: str | None) -> None:
 
 def run_demo_turn(me: str, turns, conversation: Path, step: float) -> bool:
     """Play the scripted demo turn for this point in the story, if it is ours."""
-    from workshop.agents.demo_files import DEMO_FILES
+    from workshop.agents.demo_files import DEMO_FILES, DEMO_KANBAN
     from workshop.agents.demo_script import DEMO_TURNS, demo_entry
 
     index = sum(1 for t in turns if t.speaker in AGENTS)
@@ -84,7 +84,14 @@ def run_demo_turn(me: str, turns, conversation: Path, step: float) -> bool:
     script = DEMO_TURNS[index]
     root = conversation.parent
     pending = {path: content for (turn, path), content in DEMO_FILES.items() if turn == index}
-    for line in script.steps:
+    board_start, board_mid, board_end = DEMO_KANBAN.get(index, (None, None, None))
+    printed = [line for line in script.steps if line]
+    mid_line = printed[len(printed) // 2] if printed else None
+    for n, line in enumerate(script.steps):
+        if n == 1 and board_start:
+            _apply_demo_file(root, "KANBAN.md", board_start)  # first thing each turn: the board
+        if line and line is mid_line and board_mid:
+            _apply_demo_file(root, "KANBAN.md", board_mid)
         if line:
             print(line, flush=True)
             target = re.match(r"\[tool\] (?:Write|Edit): (.+)$", line)
@@ -98,6 +105,9 @@ def run_demo_turn(me: str, turns, conversation: Path, step: float) -> bool:
             time.sleep(step)
     for path, content in pending.items():  # anything the script didn't name explicitly
         _apply_demo_file(root, path, content)
+    if board_end:
+        _apply_demo_file(root, "KANBAN.md", board_end)
+        time.sleep(step)
     number = sum(1 for t in turns if t.speaker == me) + 1
     with conversation.open("a", encoding="utf-8", newline="\n") as f:
         f.write(demo_entry(script, number))

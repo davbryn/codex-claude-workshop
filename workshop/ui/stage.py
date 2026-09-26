@@ -203,6 +203,7 @@ class StageWidget(QWidget):
         self.shot_agent: str | None = None  # camera: None = the room, else that agent's monitor close-up
         self.shot_blend = 0.0
         self._shot_shown: str | None = None
+        self.caption: tuple[str | None, str, float] = (None, "", 0.0)  # close-up subtitle
         self._screen_cache: dict = {}
 
     # -- time / animation settings -------------------------------------------
@@ -558,6 +559,38 @@ class StageWidget(QWidget):
             self.shot_blend = 1.0 if agent else 0.0
         self.wake()
 
+    def set_caption(self, agent: str | None, text: str) -> None:
+        """A subtitle in the monitor close-up: what the working character is muttering."""
+        self.caption = (agent, text, self.now())
+        self.wake()
+
+    def _paint_caption(self, p: QPainter, frame: QRectF, t: float) -> None:
+        agent, text, born = self.caption
+        if not agent or not text:
+            return
+        appear = min(1.0, (t - born) / 0.25)
+        font = _font(max(15, frame.height() * 0.045), italic=True, family="Segoe UI")
+        name_font = _font(max(13, frame.height() * 0.036), bold=True, family="Bahnschrift")
+        fm = QFontMetricsF(font)
+        width = min(frame.width() * 0.62, fm.horizontalAdvance(text) + 60)
+        body = fm.boundingRect(QRectF(0, 0, width - 32, 400), int(Qt.TextFlag.TextWordWrap), f"“{text}”")
+        box = QRectF(frame.left() + 26, frame.bottom() - body.height() - 70, width, body.height() + 44)
+        p.save()
+        p.setOpacity(appear)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_c("#000000", 0.78))
+        p.drawRoundedRect(box, 10, 10)
+        p.setBrush(_c(ACCENT[agent]))
+        p.drawRect(QRectF(box.left(), box.top() + 8, 4, box.height() - 16))
+        p.setFont(name_font)
+        p.setPen(_c(ACCENT[agent]))
+        p.drawText(QRectF(box.left() + 16, box.top() + 6, box.width() - 24, 20), Qt.AlignmentFlag.AlignLeft, CHARACTER[agent].upper())
+        p.setFont(font)
+        p.setPen(_c("#f2ede4"))
+        p.drawText(QRectF(box.left() + 16, box.top() + 28, width - 32, body.height() + 4),
+                   int(Qt.TextFlag.TextWordWrap), f"“{text}”")
+        p.restore()
+
     def _apply_push_in(self, p: QPainter, L: dict, blend: float) -> None:
         """While cutting in, the room camera pushes toward the monitor, so the cut reads as 'look at his screen'."""
         if self.reduced_motion:
@@ -588,7 +621,8 @@ class StageWidget(QWidget):
         p.setBrush(QColor("#17181c"))
         p.drawRoundedRect(frame, 14, 14)
         screen = frame.adjusted(14, 14, -14, -22)
-        vw = 640
+        # bigger windows show more code, not bigger code: about 1.6x upscaling at most
+        vw = int(max(560, min(1400, screen.width() / 1.6)))
         vh = max(200, int(vw * screen.height() / max(1.0, screen.width())))
         feed = self.screens.get(agent)
         key = ("closeup", id(feed), feed.version if feed else 0, int(feed.revealed) if feed else 0, int(t * 2.5),
@@ -615,6 +649,8 @@ class StageWidget(QWidget):
         self._paint_pip(p, L, agent, main_rect, t, main=True)
         self._paint_pip(p, L, other, QRectF(main_rect.left() - 26 - small, frame.bottom() - small - 50, small, small),
                         t, main=False)
+        if self.caption[0] == agent:
+            self._paint_caption(p, frame, t)
         p.restore()
 
     def _paint_pip(self, p: QPainter, L: dict, agent: str, rect: QRectF, t: float, main: bool) -> None:
