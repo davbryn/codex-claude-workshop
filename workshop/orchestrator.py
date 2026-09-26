@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, Signal
 
@@ -93,6 +94,15 @@ class Orchestrator(QObject):
         self.last_error: str = ""
         self.agent_states = {a: A_WAITING for a in AGENTS}
         self._last_text = ""
+        # Optional pacing hook (e.g. "let the presentation finish speaking").
+        # It can only *delay* a launch, never skip or reorder one, and gives up
+        # after launch_gate_max seconds so it can never stall the workshop.
+        self.launch_gate: Callable[[], bool] | None = None
+        self.launch_gate_max = 25.0
+        self._gate_timer = QTimer(self)
+        self._gate_timer.setSingleShot(True)
+        self._gate_timer.timeout.connect(self._retry_gated_launch)
+        self._gate_waited = 0.0
 
         self._watcher = QFileSystemWatcher(self)
         self._watcher.fileChanged.connect(lambda _p: self._check_file())
@@ -129,6 +139,7 @@ class Orchestrator(QObject):
         self._advance()
 
     def stop(self) -> None:
+        self._gate_timer.stop()
         self.stopped = True
         self.paused = False
         if self.running_process is not None:
@@ -137,10 +148,10 @@ class Orchestrator(QObject):
         self._set_state(STOPPED)
         self._mark_idle_agents(A_STOPPED)
 
-    def submit_human_turn(self, message: str, next_agent: str, resume: bool = True) -> None:
+    def submit_human_turn(self, message: str, next_agent: str, resume: bool = True, title: str = "Intervention") -> None:
         if self.is_busy():
             raise RuntimeError("Cannot add a human turn while an agent is running. Pause first.")
-        append_human_turn(self.conversation_path, message, next_agent)
+        append_human_turn(self.conversation_path, message, next_agent, title)
         self._check_file(force=True)
         if resume:
             self.resume()
@@ -164,7 +175,7 @@ class Orchestrator(QObject):
     # -- core loop ----------------------------------------------------------
 
     def _advance(self) -> None:
-        if self.is_busy() or self.stopped:
+        if self.is_busy() or self.stopped or self._gate_timer.isActive():
             return
         text = self._check_file(force=True)
         signal = get_control_signal(text)
@@ -174,7 +185,10 @@ class Orchestrator(QObject):
             if self.paused:
                 self._set_state(PAUSED)
                 self._mark_idle_agents(A_PAUSED)
+            elif self.launch_gate and self._gate_waited < self.launch_gate_max and not self.launch_gate():
+                self._gate_timer.start(250)
             else:
+                self._gate_waited = 0.0
                 self._launch(signal.agent)
             return
 
@@ -207,6 +221,10 @@ class Orchestrator(QObject):
         else:
             text = signal.detail
         self._needs_attention(text)
+
+    def _retry_gated_launch(self) -> None:
+        self._gate_waited += 0.25
+        self._advance()  # re-reads conversation.md, re-checks pause/stop
 
     def _launch(self, agent: str) -> None:
         adapter = self.adapters[agent]

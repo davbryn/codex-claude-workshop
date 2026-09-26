@@ -9,12 +9,12 @@ from pathlib import Path
 
 from .agents.claude import DEFAULT_CLAUDE_ARGS
 from .agents.codex import DEFAULT_CODEX_ARGS
+from .theatre.avatar_state import DEFAULT_PERSONAS, Persona
 
 APP_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = APP_DIR / "config"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 PERSONALITIES_PATH = CONFIG_DIR / "personalities.json"
-ASSETS_DIR = APP_DIR / "assets"
 
 
 @dataclass
@@ -30,6 +30,21 @@ class Settings:
     claude_command: str = "claude"
     claude_args: list[str] = field(default_factory=lambda: list(DEFAULT_CLAUDE_ARGS))
     window_geometry: str = ""  # hex of QWidget.saveGeometry()
+    # Workshop Theatre
+    animations: bool = True
+    reduced_motion: bool = False
+    typewriter: bool = True
+    theatre_mode: bool = False
+    rivalry_mode: bool = True
+    speech_enabled: bool = True
+    speech_engine: str = "auto"  # auto | neural | system
+    speech_muted: bool = False
+    codex_voice: str = ""
+    claude_voice: str = ""
+    speech_rate: float = 0.1
+    speech_volume: float = 0.85
+    sfx_enabled: bool = True
+    sfx_volume: float = 0.45
 
     @classmethod
     def load(cls, path: Path = SETTINGS_PATH) -> "Settings":
@@ -45,17 +60,34 @@ class Settings:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
 
-def load_personalities(path: Path = PERSONALITIES_PATH) -> dict[str, dict[str, str]]:
-    """``{preset name: {"Codex": text, "Claude": text}}``"""
+def _load_raw(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
-    return {name: {"Codex": p.get("Codex", ""), "Claude": p.get("Claude", "")} for name, p in data.items()}
+    return data if isinstance(data, dict) else {}
+
+
+def load_personalities(path: Path = PERSONALITIES_PATH) -> dict[str, dict[str, str]]:
+    """``{preset name: {"Codex": text, "Claude": text}}``"""
+    return {
+        name: {"Codex": p.get("Codex", ""), "Claude": p.get("Claude", "")}
+        for name, p in _load_raw(path).items()
+        if isinstance(p, dict)
+    }
+
+
+def load_personas(preset: str, path: Path = PERSONALITIES_PATH) -> dict[str, Persona]:
+    """Visual persona (animation style/energy) for each agent in a preset; defaults if absent."""
+    raw = _load_raw(path).get(preset, {})
+    persona = raw.get("persona", {}) if isinstance(raw, dict) else {}
+    return {agent: Persona.from_dict(persona.get(agent), DEFAULT_PERSONAS[agent]) for agent in DEFAULT_PERSONAS}
 
 
 def save_personality_preset(name: str, codex: str, claude: str, path: Path = PERSONALITIES_PATH) -> None:
-    presets = load_personalities(path)
-    presets[name] = {"Codex": codex, "Claude": claude}
+    presets = _load_raw(path)
+    entry = presets.get(name, {}) if isinstance(presets.get(name), dict) else {}
+    entry.update({"Codex": codex, "Claude": claude})
+    presets[name] = entry
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(presets, indent=2, ensure_ascii=False), encoding="utf-8")

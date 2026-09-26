@@ -1,0 +1,599 @@
+"""The Director: turns orchestrator events into stage performances.
+
+Inputs are only public/observable: conversation.md entries, CLI output lines,
+process states and orchestrator states. The Director never influences
+orchestration (the one exception is the clearly labelled --demo auto-reply,
+which uses the ordinary Human Turn API).
+"""
+
+from __future__ import annotations
+
+import time
+from collections import deque
+from dataclasses import dataclass
+
+from PySide6.QtCore import QObject, QTimer, Signal
+
+from .. import orchestrator as orch
+from ..conversation import AGENTS, ConversationTurn, parse_conversation
+from ..orchestrator import Orchestrator, other_agent
+from .reactions import ActivityTracker, EntryReaction, asks_for_review, classify_entry
+from .sfx import SoundEffects
+from .speech import SpeechEngine
+from .stats import RunStats, completion_lines, summarise_conversation
+from .text import bubble_excerpt, speech_text, strip_markdown
+
+LABELS = {
+    "starting": "⏳ STARTING",
+    "reading": "📖 READING",
+    "reviewing": "🔍 REVIEWING",
+    "coding": "⚙ CODING",
+    "testing": "🧪 RUNNING TESTS",
+    "planning": "📝 PLANNING",
+    "writing": "✍ WRITING UP",
+    "waiting": "☕ WAITING",
+    "sleeping": "💤 NAPPING",
+    "paused": "⏸ PAUSED",
+    "error": "⚠ ERROR",
+    "complete": "✓ COMPLETE",
+    "stopped": "■ STOPPED",
+    "human": "👀 WAITING FOR YOU",
+    "speaking": "💬 SPEAKING",
+}
+
+DEMO_HUMAN_REPLY = (
+    "Hide completed items by default and add an `--all` flag to show everything. "
+    "Also: please stop arguing about the factory. (This is the demo's automatic human reply.)"
+)
+
+
+@dataclass
+class Performance:
+    turn: ConversationTurn
+    previous: ConversationTurn | None
+    bubble: str
+    speech: str | None
+    reaction: EntryReaction | None
+    quick: bool = False
+
+
+class Director(QObject):
+    stats_changed = Signal()
+
+    def __init__(self, orchestrator: Orchestrator, stage, speech: SpeechEngine, sfx: SoundEffects,
+                 rivalry: bool = True, speech_enabled: bool = True, demo_auto_reply: float | None = None,
+                 sleep_after: float = 150.0, parent: QObject | None = None):
+        super().__init__(parent)
+        self.o = orchestrator
+        self.stage = stage
+        self.speech = speech
+        self.sfx = sfx
+        self.rivalry = rivalry
+        self.speech_enabled = speech_enabled
+        self.muted = False
+        self.demo_auto_reply = demo_auto_reply
+        self.sleep_after = sleep_after
+        self.stats = RunStats()
+        self.trackers = {a: ActivityTracker() for a in AGENTS}
+        self.last_kind = {a: None for a in AGENTS}
+        self.turn_failed = {a: False for a in AGENTS}
+        self.review_turn = {a: False for a in AGENTS}
+        self.orch_state = {a: orch.A_WAITING for a in AGENTS}
+        self.waiting_since = {a: time.monotonic() for a in AGENTS}
+        self.status_text = {a: "" for a in AGENTS}
+        self.popcorn = False
+        self.queue: deque[Performance] = deque()
+        self.current: Performance | None = None
+        self._seen = 0
+        self._initialised = False
+        self._last_sfx: dict[str, float] = {}
+        self._last_react: dict[tuple[str, str], float] = {}
+        self._countdown = 0
+        self._idle_callbacks: list = []
+        self._voice_live = False
+        stage.level_source = self._voice_level
+
+        self._end_timer = QTimer(self)
+        self._end_timer.setSingleShot(True)
+        self._end_timer.timeout.connect(self._end_performance)
+        self._gap_timer = QTimer(self)
+        self._gap_timer.setSingleShot(True)
+        self._gap_timer.timeout.connect(self._next_performance)
+        self._ambient = QTimer(self)
+        self._ambient.timeout.connect(self._ambient_tick)
+        self._ambient.start(2000)
+        self._demo_timer = QTimer(self)
+        self._demo_timer.timeout.connect(self._demo_tick)
+
+        o = orchestrator
+        o.conversation_changed.connect(self.on_conversation)
+        o.agent_state_changed.connect(self.on_agent_state)
+        o.agent_output.connect(self.on_output)
+        o.turn_started.connect(self.on_turn_started)
+        o.turn_finished.connect(self.on_turn_finished)
+        o.state_changed.connect(self.on_state)
+        speech.finished.connect(self._on_speech_finished)
+        speech.started.connect(self._on_speech_started)
+        speech.progress.connect(lambda agent, chars: self.stage.speech_progress(agent, chars))
+
+    # -- settings -------------------------------------------------------------
+
+    def set_speech(self, speech: SpeechEngine) -> None:
+        """Swap the speech engine (e.g. system voices → Kokoro) without restarting."""
+        for signal, slot in ((self.speech.finished, self._on_speech_finished),
+                             (self.speech.started, self._on_speech_started)):
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        self.speech = speech
+        speech.finished.connect(self._on_speech_finished)
+        speech.started.connect(self._on_speech_started)
+        speech.progress.connect(lambda agent, chars: self.stage.speech_progress(agent, chars))
+
+    def set_muted(self, muted: bool) -> None:
+        self.muted = muted
+        if muted:
+            self.speech.stop()
+
+    def speaking_allowed(self) -> bool:
+        return self.speech_enabled and not self.muted and self.speech.available()
+
+    def shutdown(self) -> None:
+        for timer in (self._end_timer, self._gap_timer, self._ambient, self._demo_timer):
+            timer.stop()
+        self.speech.stop()
+        self.stage.stop()
+
+    # -- conversation → performances -------------------------------------------
+
+    def on_conversation(self, text: str) -> None:
+        turns = parse_conversation(text)
+        for agent in AGENTS:
+            self.stage.set_turns(agent, sum(1 for t in turns if t.speaker == agent))
+        if not self._initialised:
+            self._initialised = True
+            self._seen = len(turns)
+            for agent in AGENTS:
+                mine = [t for t in turns if t.speaker == agent]
+                if mine:
+                    self.stage.show_speech(agent, bubble_excerpt(mine[-1].content) or "…", mode="instant")
+                else:
+                    self.stage.show_status(agent, "Waiting for the first turn")
+            if turns and len(turns) == 1 and turns[0].speaker == "Human":
+                self._enqueue(Performance(turns[0], None, "", None, None))
+            self.stats_changed.emit()
+            return
+        if len(turns) < self._seen:
+            self._seen = len(turns)
+            return
+        new = turns[self._seen:]
+        start = self._seen
+        self._seen = len(turns)
+        for offset, turn in enumerate(new):
+            previous = turns[start + offset - 1] if start + offset > 0 else None
+            if turn.speaker == "Human":
+                self._enqueue(Performance(turn, previous, "", None, None))
+            else:
+                reaction = classify_entry(turn)
+                self.stats.record_entry(turn, handed_off=bool(turn.handoff), disagreement=reaction.disagreement)
+                self._enqueue(Performance(turn, previous, bubble_excerpt(turn.content) or "…",
+                                          speech_text(turn.content) or None, reaction))
+        popcorn = self.stats.disagreement_streak >= 3
+        if popcorn and not self.popcorn:
+            self.stage.badge("🍿 THIS IS GETTING GOOD", "center", "#ffe08a", 3.2)
+        self.popcorn = popcorn
+        if self.stats.handoff_streak and self.stats.handoff_streak % 10 == 0:
+            self.stage.badge(f"🔁 PAIR PROGRAMMING STREAK ×{self.stats.handoff_streak}", "center", "#8fb8ff", 3.4)
+        self.stats_changed.emit()
+
+    def _enqueue(self, perf: Performance) -> None:
+        self.queue.append(perf)
+        # Never let a backlog build up: older queued entries play quickly and silently.
+        while len(self.queue) > 2:
+            stale = self.queue.popleft()
+            stale.quick, stale.speech = True, None
+            self._play(stale, instant=True)
+        if self.current is None and not self._gap_timer.isActive():
+            self._next_performance()
+
+    def _next_performance(self) -> None:
+        # Human cards don't occupy the stage's "current" slot, so keep going
+        # until an agent performance is playing (or the queue is empty).
+        while self.current is None and self.queue:
+            self._play(self.queue.popleft())
+        if self.presentation_idle():
+            callbacks, self._idle_callbacks = self._idle_callbacks, []
+            for callback in callbacks:
+                callback()
+
+    def presentation_idle(self) -> bool:
+        """True when no entry is being performed or waiting to be (used as a launch gate)."""
+        return self.current is None and not self.queue and not self._gap_timer.isActive()
+
+    def _after_idle(self, callback) -> None:
+        if self.presentation_idle():
+            callback()
+        else:
+            self._idle_callbacks.append(callback)
+
+    def _play(self, perf: Performance, instant: bool = False) -> None:
+        turn = perf.turn
+        if turn.speaker == "Human":
+            self._play_human(perf, instant)
+            return
+        agent, other = turn.speaker, other_agent(turn.speaker)
+        m, om = self.stage.models[agent], self.stage.models[other]
+        r = perf.reaction
+        if instant:
+            self.stage.show_speech(agent, perf.bubble, mode="instant")
+            primary = r.primary_state() if r else "idle"
+            if primary != "idle":
+                m.react(primary)
+            return
+
+        self.current = perf
+        if om.base == "sleeping":
+            om.set_base("waiting")
+            om.react("surprised", 1.4)
+        speak = bool(perf.speech) and self.speaking_allowed()
+        self.stage.show_speech(agent, perf.bubble, mode="speech" if speak else "typewriter")
+        m.set_talking(True)
+        if r and r.mentions_other:
+            m.look_at_other(2.0)
+        primary = r.primary_state() if r else "idle"
+        if primary in ("disagreeing", "embarrassed", "confused", "celebrating", "pleased", "smug", "waiting"):
+            if primary != "waiting":
+                m.react(primary, None)
+        listener = r.listener_state(self.rivalry) if r else None
+        om.look_at_other(3.5)
+        if listener:
+            om.react(listener)
+        self._effects_at_start(agent, other, r)
+        self.stage.set_status(agent, self.orch_state[agent], LABELS["speaking"])
+        if speak and self.speech.speak(agent, perf.speech):
+            self._end_timer.start(int((len(perf.speech) / 9 + 8) * 1000))  # safety net
+        else:
+            seconds = max(2.4, min(7.0, len(perf.bubble) / 17 + 1.4))
+            self._end_timer.start(int(seconds * 1000))
+
+    def _play_human(self, perf: Performance, instant: bool) -> None:
+        turn = perf.turn
+        start = turn.title.lower() == "project start"
+        body = strip_markdown(turn.content)
+        body = " ".join(line for line in body.splitlines() if not line.strip().startswith("_20")).strip()
+        if len(body) > 220:
+            body = body[:219].rsplit(" ", 1)[0] + "…"
+        footer = f"➜ over to {turn.handoff}" if turn.handoff else ""
+        title = "👤 HUMAN — PROJECT BRIEF" if start else "👤 THE HUMAN ENTERS"
+        if instant:
+            return
+        self.stage.show_card("human", title, [body], "#8fb8ff", duration=5.0, footer=footer)
+        for agent in AGENTS:
+            m = self.stage.models[agent]
+            if m.base == "sleeping":
+                m.set_base("waiting")
+            m.look_at_human(4.5)
+            if not start:
+                m.react("surprised", 1.2)
+        self._sfx("human")
+
+    def _effects_at_start(self, agent: str, other: str, r: EntryReaction | None) -> None:
+        if r is None:
+            return
+        if r.disagreement:
+            self.stage.badge("⚔ TECHNICAL DISAGREEMENT", "center", "#ff9a8a", 3.0)
+            if self.rivalry:
+                self.stage.lightning(1.4)
+                self.stage.shake(7)
+            self._sfx("zap")
+        if r.admits_mistake:
+            self.stage.badge("CORRECTION ACKNOWLEDGED", agent, "#8fd9ff", 2.8)
+        if r.fixed_other_bug and self.rivalry:
+            self.stage.badge("GOOD CATCH", agent, "#7dffc4", 2.8)
+            self._sfx("pop")
+        if r.fixed_own_mistake:
+            self.stage.badge("✨ CHARACTER DEVELOPMENT", "center", "#d6b4ff", 3.2)
+        if r.proposes_completion:
+            self.stage.badge("PROPOSES: PROJECT COMPLETE", "center", "#8fd9ff", 3.2)
+
+    def _voice_level(self, agent: str) -> float | None:
+        """Live loudness for the talking character (None → synthetic mouth)."""
+        if self._voice_live and self.current and self.current.turn.speaker == agent:
+            return self.speech.level()
+        return None
+
+    def _on_speech_started(self, agent: str) -> None:
+        if self.current and self.current.turn.speaker == agent:
+            self._voice_live = True
+
+    def _on_speech_finished(self, agent: str) -> None:
+        self._voice_live = False
+        if self.current and self.current.turn.speaker == agent:
+            self._end_performance()
+
+    def _end_performance(self) -> None:
+        self._end_timer.stop()
+        self._voice_live = False
+        perf, self.current = self.current, None
+        if perf is None:
+            return
+        turn = perf.turn
+        if turn.speaker in AGENTS:
+            agent, other = turn.speaker, other_agent(turn.speaker)
+            m = self.stage.models[agent]
+            m.set_talking(False)
+            self.stage.finish_speech_reveal(agent)
+            r = perf.reaction
+            primary = r.primary_state() if r else "idle"
+            if m.reaction is not None and m.reaction_until is None:
+                m.release()
+            elif primary not in ("idle", "waiting"):
+                m.react(primary)
+            if primary == "celebrating" and not (r and r.declares_complete):
+                self.stage.burst(agent)
+            if turn.handoff:
+                # a little throw-and-catch: point, send the orb, the other one catches it
+                m.gesture("point", 0.9)
+                m.look_at_other(2.5)
+                self.stage.handoff(agent, turn.handoff)
+                self._sfx("handoff")
+                receiver = self.stage.models[turn.handoff]
+                receiver.look_at_other(2.0)
+                QTimer.singleShot(720, lambda r=receiver: (r.gesture("catch", 0.7), r.hop(0.3, anticipation=False),
+                                                           r.nudge_wobble(90)))
+            self._restore_label(agent)
+            self._apply_status(agent)
+        self._gap_timer.start(350)
+
+    # -- process / output --------------------------------------------------------
+
+    def on_turn_started(self, agent: str, number: int) -> None:
+        self.stage.set_active(agent)
+        self.stage.on_air = True
+        self.trackers[agent].reset()
+        self.last_kind[agent] = None
+        self.turn_failed[agent] = False
+        turns = parse_conversation(self.o.conversation_text())
+        self.review_turn[agent] = asks_for_review(turns[-1] if turns else None)
+        other = other_agent(agent)
+        self.stage.models[other].look_at_other(2.5)
+        self.stage.set_activity(agent, "")
+        self.stats_changed.emit()
+
+    def on_turn_finished(self, agent: str, exit_code: int) -> None:
+        self.stage.set_active(None)
+        self.stage.set_activity(agent, "")
+        self.stage.on_air = self.o.is_busy()
+        self.stats_changed.emit()
+
+    def on_agent_state(self, agent: str, state: str) -> None:
+        self.orch_state[agent] = state
+        m = self.stage.models[agent]
+        if state == orch.A_STARTING:
+            m.set_base("thinking")
+            self._set_status(agent, "Working…")
+        elif state == orch.A_READING:
+            m.set_base("reviewing" if self.review_turn[agent] else "reading")
+        elif state == orch.A_WORKING:
+            m.set_base(self._base_for_kind(agent, self.last_kind[agent] or "command"))
+        elif state == orch.A_HANDING_OFF:
+            m.set_base("coding")
+        elif state == orch.A_WAITING:
+            m.set_base("waiting")
+            self.waiting_since[agent] = time.monotonic()
+            if m.reaction == "error":
+                m.clear_reaction()
+            self._set_status(agent, f"Waiting for {other_agent(agent)}" if self.o.is_busy() else "Waiting")
+        elif state == orch.A_PAUSED:
+            m.set_base("idle")
+        elif state == orch.A_ERROR:
+            m.set_base("error")
+            m.react("error")
+            self.stage.shake(4)
+            self._sfx("buzz")
+            self.stats.record_error()
+            self.stage.badge("⚠ ERROR", agent, "#ff8a80", 2.6)
+        elif state == orch.A_COMPLETE:
+            m.set_base("complete")
+        elif state == orch.A_STOPPED:
+            m.set_base("idle")
+        self._restore_label(agent)
+        self.stats_changed.emit()
+
+    def _base_for_kind(self, agent: str, kind: str | None) -> str:
+        if kind == "read":
+            return "reviewing" if self.review_turn[agent] else "reading"
+        if kind == "plan":
+            return "thinking"
+        return "coding"
+
+    def _restore_label(self, agent: str) -> None:
+        state = self.orch_state[agent]
+        if self.current and self.current.turn.speaker == agent:
+            label = LABELS["speaking"]
+        elif self.o.state == orch.WAITING_HUMAN and not self.o.is_busy():
+            label = LABELS["human"]
+        elif state == orch.A_STARTING:
+            label = LABELS["starting"]
+        elif state in (orch.A_READING, orch.A_WORKING):
+            kind = self.last_kind[agent]
+            if kind == "test":
+                label = LABELS["testing"]
+            elif kind == "plan":
+                label = LABELS["planning"]
+            elif kind == "read" or (kind is None and state == orch.A_READING):
+                label = LABELS["reviewing" if self.review_turn[agent] else "reading"]
+            else:
+                label = LABELS["coding"]
+        elif state == orch.A_HANDING_OFF:
+            label = LABELS["writing"]
+        elif state == orch.A_WAITING:
+            label = LABELS["sleeping"] if self.stage.models[agent].base == "sleeping" else LABELS["waiting"]
+        else:
+            label = {orch.A_PAUSED: LABELS["paused"], orch.A_ERROR: LABELS["error"],
+                     orch.A_COMPLETE: LABELS["complete"], orch.A_STOPPED: LABELS["stopped"]}.get(state, state)
+        self.stage.set_status(agent, state, label)
+
+    def _set_status(self, agent: str, text: str) -> None:
+        self.status_text[agent] = text
+        self._apply_status(agent)
+
+    def _apply_status(self, agent: str) -> None:
+        """Show the status pill unless this agent's speech is still being performed."""
+        busy_speaking = (self.current and self.current.turn.speaker == agent) or any(
+            p.turn.speaker == agent for p in self.queue)
+        if busy_speaking:
+            return
+        if self.o.current_agent == agent and self.status_text[agent]:
+            self.stage.show_status(agent, self.status_text[agent])
+
+    def on_output(self, agent: str, stream: str, text: str) -> None:
+        if stream == "system":
+            return
+        for line in text.splitlines() or [text]:
+            self._on_output_line(agent, line)
+
+    def _on_output_line(self, agent: str, line: str) -> None:
+        cue = self.trackers[agent].feed(line)
+        if not cue:
+            return
+        m = self.stage.models[agent]
+        if cue.activity:
+            self.last_kind[agent] = cue.kind
+            self.stage.set_activity(agent, cue.activity)
+            if self.orch_state[agent] in (orch.A_READING, orch.A_WORKING, orch.A_STARTING):
+                m.set_base(self._base_for_kind(agent, cue.kind))
+                self._set_status(agent, cue.activity)
+            self._restore_label(agent)
+            if cue.kind == "edit":
+                self.stats_changed.emit()
+        if cue.tests_ok:
+            self.stats.record_tests(cue.tests_passed, cue.tests_failed, True)
+            count = f"{cue.tests_passed} " if cue.tests_passed else ""
+            if self.turn_failed[agent]:
+                self._react_once(agent, "surprised", 1.8)
+                self.stage.badge(f"😮 {count}TESTS PASS NOW", agent, "#7dffc4", 3.0)
+            else:
+                self._react_once(agent, "pleased", 2.4)
+                self.stage.badge(f"✓ {count}PASSED".replace("  ", " "), agent, "#7dffc4", 2.6)
+            self.stage.burst(agent, 14)
+            self._sfx("chime", 2.5)
+            self.turn_failed[agent] = False
+            self.stats_changed.emit()
+        elif cue.tests_failed:
+            self.stats.record_tests(cue.tests_passed, cue.tests_failed, False)
+            self.turn_failed[agent] = True
+            self._react_once(agent, "error", 2.2)
+            self.stage.badge(f"✗ {cue.tests_failed} FAILED", agent, "#ff8a80", 2.6)
+            self._sfx("oops", 2.5)
+            self.stats_changed.emit()
+        elif cue.error:
+            self._react_once(agent, "confused", 2.0, cooldown=6.0)
+
+    def _react_once(self, agent: str, state: str, seconds: float, cooldown: float = 1.5) -> None:
+        key = (agent, state)
+        now = time.monotonic()
+        if now - self._last_react.get(key, -99) < cooldown:
+            return
+        self._last_react[key] = now
+        m = self.stage.models[agent]
+        if not m.talking:
+            m.react(state, seconds)
+
+    # -- orchestrator states ---------------------------------------------------
+
+    def on_state(self, state: str) -> None:
+        stage = self.stage
+        stage.paused = state in (orch.PAUSED,)
+        if state != orch.WAITING_HUMAN:
+            stage.hide_card("waiting")
+            self._demo_timer.stop()
+        if state == orch.RUNNING:
+            stage.on_air = True
+        elif state in (orch.STOPPED, orch.NEEDS_ATTENTION, orch.PAUSED, orch.COMPLETE):
+            stage.on_air = self.o.is_busy()
+        if state == orch.WAITING_HUMAN:
+            self._after_idle(self._show_waiting)
+        elif state == orch.COMPLETE:
+            self._after_idle(self._celebrate)
+        elif state in (orch.RUNNING, orch.PAUSED):
+            for agent in AGENTS:
+                stage.models[agent]._look_until = 0
+        self.stats_changed.emit()
+
+    def _show_waiting(self) -> None:
+        if self.o.state != orch.WAITING_HUMAN:
+            return
+        stage = self.stage
+        signal = self.o.last_signal
+        question = signal.detail if signal else ""
+        question = question.split(":", 1)[-1].strip() or question
+        stage.show_card("waiting", "👀 BOTH AGENTS ARE WAITING FOR YOU", [question or "A human decision is needed."],
+                        "#f5c542", footer="Answer with the Human Turn button")
+        for agent in AGENTS:
+            m = stage.models[agent]
+            m.set_base("waiting")
+            m.look_at_human(9999)
+            self._restore_label(agent)
+        self._sfx("alert")
+        if self.demo_auto_reply:
+            self._countdown = int(self.demo_auto_reply)
+            self._demo_tick()
+            self._demo_timer.start(1000)
+
+    def _celebrate(self) -> None:
+        if self.o.state != orch.COMPLETE:
+            return
+        stage = self.stage
+        for agent in AGENTS:
+            m = stage.models[agent]
+            m.set_base("complete")
+            m.react("celebrating", 4.5)
+            m.look_at_other(4.0)
+        stage.confetti()
+        stage.light_sweep(7.0)
+        self._sfx("fanfare")
+        summary = summarise_conversation(parse_conversation(self.o.conversation_text()))
+        stage.show_card("complete", "🏆 PROJECT COMPLETE", completion_lines(summary, self.stats), "#8fd9ff",
+                        footer="Reviewed and agreed by both agents")
+
+    def _demo_tick(self) -> None:
+        if self.o.state != orch.WAITING_HUMAN or self.o.is_busy():
+            self._demo_timer.stop()
+            return
+        if self._countdown <= 0:
+            self._demo_timer.stop()
+            self.o.submit_human_turn(DEMO_HUMAN_REPLY, "Claude", title="Demo auto-reply")
+            return
+        self.stage.update_card_footer("waiting", f"Demo: the human answers automatically in {self._countdown}s "
+                                                 "(or use Human Turn)")
+        self._countdown -= 1
+
+    def _ambient_tick(self) -> None:
+        now = time.monotonic()
+        busy = self.o.is_busy()
+        for agent in AGENTS:
+            m = self.stage.models[agent]
+            if (busy and self.o.current_agent != agent and self.orch_state[agent] == orch.A_WAITING
+                    and m.base == "waiting" and now - self.waiting_since[agent] > self.sleep_after
+                    and not m.talking and self.o.state != orch.WAITING_HUMAN):
+                m.set_base("sleeping")
+                self._restore_label(agent)
+        self.stats_changed.emit()
+
+    def _sfx(self, name: str, cooldown: float = 0.4) -> None:
+        now = time.monotonic()
+        if now - self._last_sfx.get(name, -99) < cooldown:
+            return
+        self._last_sfx[name] = now
+        self.sfx.play(name)
+
+    # -- status strip data ---------------------------------------------------------
+
+    def files_edited(self) -> int | None:
+        agent = self.o.current_agent
+        if agent is None:
+            return None
+        count = len(self.trackers[agent].files_edited)
+        return count or None

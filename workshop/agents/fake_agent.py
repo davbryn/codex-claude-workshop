@@ -57,6 +57,26 @@ def say(text: str, delay: float) -> None:
     time.sleep(delay)
 
 
+def run_demo_turn(me: str, turns, conversation: Path, step: float) -> bool:
+    """Play the scripted demo turn for this point in the story, if it is ours."""
+    from workshop.agents.demo_script import DEMO_TURNS, demo_entry
+
+    index = sum(1 for t in turns if t.speaker in AGENTS)
+    if index >= len(DEMO_TURNS) or DEMO_TURNS[index].agent != me:
+        return False  # the human rerouted the story; fall back to generic behaviour
+    script = DEMO_TURNS[index]
+    for line in script.steps:
+        if line:
+            print(line, flush=True)
+            time.sleep(step * 0.55)
+        else:
+            time.sleep(step)
+    number = sum(1 for t in turns if t.speaker == me) + 1
+    with conversation.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(demo_entry(script, number))
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", required=True, choices=AGENTS)
@@ -72,7 +92,8 @@ def main() -> int:
     conversation = Path(args.dir) / "conversation.md"
     step = args.delay / 4
 
-    say(f"[fake {me}] received prompt ({len(prompt)} chars)", step)
+    if args.behavior != "demo":
+        say(f"[fake {me}] received prompt ({len(prompt)} chars)", step)
     if args.behavior == "fail":
         print(f"[fake {me}] simulated crash: something went terribly wrong", file=sys.stderr, flush=True)
         return 1
@@ -83,6 +104,9 @@ def main() -> int:
     if signal is None or signal.kind != "handoff" or signal.agent != me:
         print(f"[fake {me}] refusing to act: latest handoff is not @{me}", file=sys.stderr, flush=True)
         return 2
+
+    if args.behavior == "demo" and run_demo_turn(me, turns, conversation, args.delay):
+        return 0
 
     say(f"[fake {me}] reading conversation.md ({len(turns)} entries)", step)
     say(f"[fake {me}] inspecting project files…", step)

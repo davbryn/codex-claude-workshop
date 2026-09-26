@@ -5,16 +5,23 @@ from __future__ import annotations
 import html
 import re
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import QTextBrowser
 
-from ..conversation import COMPLETE_MARKER, HUMAN_DECISION_MARKER, parse_conversation
-from .agent_panel import ACCENTS
+from ..conversation import COMPLETE_MARKER, HUMAN_DECISION_MARKER, PROPOSE_COMPLETE_MARKER, parse_conversation
+from .theme import ACCENTS
 
 SPEAKER_COLOURS = {**ACCENTS, "Human": "#8fb8ff"}
 CARD_BG = {"Codex": "#15201b", "Claude": "#241913", "Human": "#161d2b"}
 
 _HANDOFF_LINE = re.compile(r"^\**\s*@(Codex|Claude)\s*\**$", re.IGNORECASE)
+ICONS = {"Codex": "avatar:codex", "Claude": "avatar:claude"}
+
+
+def _badge(text: str, bg: str, fg: str = "#10141b") -> str:
+    return (f'<div style="margin-top:4px;"><span style="background:{bg};color:{fg};font-weight:bold;'
+            f'font-size:11px;">&nbsp;&nbsp;{text}&nbsp;&nbsp;</span></div>')
 
 
 def _inline(text: str) -> str:
@@ -51,12 +58,11 @@ def _render_body(content: str) -> str:
             continue
         elif m := _HANDOFF_LINE.match(stripped):
             name = m.group(1).capitalize()
-            out.append(
-                f'<div><span style="background:{SPEAKER_COLOURS[name]};color:#111;font-weight:bold;">'
-                f"&nbsp;➜ @{name}&nbsp;</span></div>"
-            )
-        elif COMPLETE_MARKER in stripped and len(stripped) < 40:
-            out.append('<div style="color:#8fd9ff;font-weight:bold;font-size:15px;">✓ PROJECT COMPLETE</div>')
+            out.append(_badge(f"HANDS OFF ➜ @{name.upper()}", SPEAKER_COLOURS[name]))
+        elif stripped.strip("*_` ").rstrip(".!") == PROPOSE_COMPLETE_MARKER:
+            out.append(_badge("⚑ PROPOSE PROJECT COMPLETE", "#3a6f8f", "#e6f6ff"))
+        elif stripped.strip("*_` ").rstrip(".!") == COMPLETE_MARKER:
+            out.append(_badge("✓ PROJECT COMPLETE", "#8fd9ff"))
         elif stripped.upper().startswith(HUMAN_DECISION_MARKER):
             out.append(f'<div style="color:#f5c542;font-weight:bold;">⚠ {_inline(stripped)}</div>')
         elif re.fullmatch(r"\*\*[^*]+\*\*:?", stripped) or stripped.startswith("#"):
@@ -80,11 +86,13 @@ def render_conversation_html(text: str) -> str:
     for turn in turns:
         colour = SPEAKER_COLOURS.get(turn.speaker, "#ccc")
         title = f" — {html.escape(turn.title)}" if turn.title else ""
+        icon = (f'<img src="{ICONS[turn.speaker]}" width="22" height="22" style="vertical-align:middle;">&nbsp;'
+                if turn.speaker in ICONS else "👤&nbsp;")
         parts.append(
             '<table width="100%" cellspacing="0" cellpadding="8" style="margin-bottom:10px;">'
             f'<tr><td width="5" bgcolor="{colour}"></td>'
             f'<td bgcolor="{CARD_BG.get(turn.speaker, "#1a1d23")}">'
-            f'<div style="color:{colour};font-weight:bold;font-size:15px;">{turn.speaker}{title}</div>'
+            f'<div style="color:{colour};font-weight:bold;font-size:15px;">{icon}{turn.speaker}{title}</div>'
             f'<div style="color:#c9d1d9;">{_render_body(turn.content)}</div>'
             "</td></tr></table>"
         )
@@ -99,6 +107,18 @@ class ConversationView(QTextBrowser):
         self.setOpenExternalLinks(True)
         self.setReadOnly(True)
         self._text: str | None = None
+        self._icons = {}
+
+    def loadResource(self, kind: int, url: QUrl):
+        """Serve the procedural mini avatars for <img src="avatar:…">."""
+        if url.scheme() == "avatar" and kind == QTextDocument.ResourceType.ImageResource.value:
+            agent = "Codex" if url.path() == "codex" else "Claude"
+            if agent not in self._icons:
+                from .avatar_paint import avatar_pixmap
+
+                self._icons[agent] = avatar_pixmap(agent, 44).toImage()
+            return self._icons[agent]
+        return super().loadResource(kind, url)
 
     def set_conversation(self, text: str) -> None:
         if text == self._text:

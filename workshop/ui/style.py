@@ -42,3 +42,16 @@ QRadioButton::indicator:checked { background: #39d98a; border-color: #39d98a; }
 QStatusBar { color: #8b93a1; }
 QSplitter::handle { background: #14171c; }
 """
+
+STYLESHEET += """
+QFrame#statusStrip { background: #10141b; border: 1px solid #242b36; border-radius: 10px; }
+QFrame#statusStrip QLabel { background: transparent; }
+QLabel#chip {
+    background: #1a2029; border: 1px solid #2a323e; border-radius: 9px; padding: 2px 9px;
+    color: #c9d1d9; font-size: 9.5pt;
+}
+QLabel#popcorn { font-size: 13pt; background: transparent; }
+QToolButton#toggle { padding: 3px 10px; border-radius: 8px; background: #1a2029; }
+QToolButton#toggle:checked { background: #2a2230; border-color: #6b4c7a; }
+QLabel#title { font-size: 17pt; }
+"""
