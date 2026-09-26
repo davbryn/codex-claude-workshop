@@ -115,6 +115,11 @@ class Director(QObject):
             feed.go_idle(self._screen_rng)
         stage.screens = self.screens
         self.differ = ProjectDiffer(orchestrator.project_dir)
+        # camera cuts: the working agent's monitor fills the stage; the room is for dialogue and reactions
+        self.camera_cuts = True
+        self._room_hold_until = 0.0
+        self._last_cut = 0.0
+        self._turn_began = 0.0
         self._diff_agent: str | None = None
 
         self._end_timer = QTimer(self)
@@ -267,6 +272,7 @@ class Director(QObject):
             return
 
         self.current = perf
+        self._to_room()
         if om.base == "sleeping":
             om.set_base("waiting")
             om.react("surprised", 1.4)
@@ -334,6 +340,7 @@ class Director(QObject):
         title = "📋 THE BRIEF (FROM MANAGEMENT)" if start else "👤 THE BOSS WALKS IN"
         if instant:
             return
+        self._to_room()
         self.stage.show_card("human", title, [body], "#7bd88f", duration=5.5, footer=footer)
         stern = bool(WORRY_RX.search(body))
         for agent in AGENTS:
@@ -471,12 +478,14 @@ class Director(QObject):
         self._diff_timer.start(max(1200, int(self.differ.last_scan_seconds * 8000)))
         feed = self.screens[agent]
         feed.command("# reading conversation.md")
+        self._turn_began = time.monotonic()
         self.stats_changed.emit()
 
     def on_turn_finished(self, agent: str, exit_code: int) -> None:
         self._poll_diffs()  # catch the last edits of the turn
         self._diff_timer.stop()
         self._diff_agent = None
+        self._to_room()
         self.stage.set_active(None)
         self.stage.set_activity(agent, "")
         self.stage.on_air = self.o.is_busy()
@@ -626,6 +635,7 @@ class Director(QObject):
     def _on_output_line(self, agent: str, line: str) -> None:
         cue = self.trackers[agent].feed(line)
         self._feed_screen(agent, line, cue)
+        self._update_shot()
         if not cue:
             return
         m = self.stage.models[agent]
@@ -647,6 +657,7 @@ class Director(QObject):
             if cue.kind == "edit":
                 self.stats_changed.emit()
         if cue.tests_ok:
+            self._to_room(3.0)  # cut to the room for the reaction
             self.stats.record_tests(cue.tests_passed, cue.tests_failed, True)
             count = f"{cue.tests_passed} " if cue.tests_passed else ""
             if self.turn_failed[agent]:
@@ -660,6 +671,7 @@ class Director(QObject):
             self.turn_failed[agent] = False
             self.stats_changed.emit()
         elif cue.tests_failed:
+            self._to_room(3.0)  # cut to the room for the reaction
             self.stats.record_tests(cue.tests_passed, cue.tests_failed, False)
             self.turn_failed[agent] = True
             self._react_once(agent, "error", 2.2)
@@ -670,6 +682,7 @@ class Director(QObject):
                 self._react_once(om.agent, "sideeye" if om.deadpan else "smug", 2.4, cooldown=8.0)
             self.stats_changed.emit()
         elif cue.error:
+            self._to_room(3.0)
             self._react_once(agent, "confused", 2.0, cooldown=6.0)
 
     def _react_once(self, agent: str, state: str, seconds: float, cooldown: float = 1.5) -> None:
@@ -714,6 +727,7 @@ class Director(QObject):
         signal = self.o.last_signal
         question = signal.detail if signal else ""
         question = question.split(":", 1)[-1].strip() or question
+        self._to_room()
         stage.show_card("waiting", "👀 THEY NEED A GROWN-UP", [question or "A human decision is needed."],
                         "#f5c542", footer="Answer with the Human Turn button")
         for agent in AGENTS:
@@ -752,6 +766,7 @@ class Director(QObject):
         lines = completion_lines(summary, self.stats)
         board = petty_scoreboard(turns)
         lines.append("Bugs caught: " + " · ".join(f"{character(a)} {board[a].bugs_caught}" for a in AGENTS))
+        self._to_room()
         stage.show_card("complete", "PROJECT COMPLETE", lines, "#f2c94c", footer=COMPLETE_FOOTER,
                         tagline=COMPLETE_TAGLINE)
 
@@ -782,6 +797,7 @@ class Director(QObject):
         auto = self.o.limit_seconds_left() is not None
         lines = [f"{who} ({limit.agent}) hit his usage limit. Nothing crashed; the workshop is paused.",
                  f"It resets at {limit.reset_text()}." if limit.reset_at else "The CLI didn't say when it resets."]
+        self._to_room()
         self.stage.show_card("limit", f"💸 {who.upper()} IS OUT OF USAGE", lines, "#f2c14e",
                              footer=self._limit_footer() if auto else "Press Resume once it has reset")
         self._sfx("wahwah")
@@ -794,7 +810,34 @@ class Director(QObject):
         m, s = divmod(rem, 60)
         return f"Auto-resume in {h}:{m:02d}:{s:02d}  (or press Resume)"
 
+    # -- camera ----------------------------------------------------------------------
+
+    def _to_room(self, hold: float = 0.0) -> None:
+        """Cut back to the room now (and stay there for ``hold`` seconds)."""
+        if self.stage.shot_agent is not None:
+            self._last_cut = time.monotonic()
+        self.stage.set_shot(None)
+        self._room_hold_until = max(self._room_hold_until, time.monotonic() + hold)
+
+    def _update_shot(self) -> None:
+        now = time.monotonic()
+        agent = self.o.current_agent if self.o.is_busy() else None
+        feed = self.screens.get(agent) if agent else None
+        want = None
+        if (self.camera_cuts and feed is not None and feed.mode in ("editor", "terminal", "reader")
+                and self.current is None and not self.queue and not self._gap_timer.isActive()
+                and not self.stage.cards and now >= self._room_hold_until
+                and now - self._turn_began > 1.5):
+            want = agent
+        if want == self.stage.shot_agent:
+            return
+        if want is not None and now - self._last_cut < 2.5:
+            return  # don't flicker between shots
+        self._last_cut = now
+        self.stage.set_shot(want)
+
     def _ambient_tick(self) -> None:
+        self._update_shot()
         now_m = time.monotonic()
         for agent, feed in self.screens.items():
             working = self.o.is_busy() and self.o.current_agent == agent

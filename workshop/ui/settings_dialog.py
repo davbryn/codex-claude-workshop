@@ -84,7 +84,9 @@ class SettingsDialog(QDialog):
         self.theatre.setChecked(settings.theatre_mode)
         self.rivalry = QCheckBox("Rivalry: glares, side-eye, gloating and the occasional caption")
         self.rivalry.setChecked(settings.rivalry_mode)
-        for w in (self.animations, self.reduced, self.typewriter, self.theatre, self.rivalry):
+        self.cuts = QCheckBox("Camera cuts: while an agent works, show his monitor full-size (readable code)")
+        self.cuts.setChecked(settings.camera_cuts)
+        for w in (self.animations, self.reduced, self.typewriter, self.theatre, self.rivalry, self.cuts):
             form.addRow(w)
         note = QLabel("All reactions are theatre, driven by public conversation text and observable CLI "
                       "events. They never affect the orchestration.")
@@ -217,6 +219,7 @@ class SettingsDialog(QDialog):
         s.typewriter = self.typewriter.isChecked()
         s.theatre_mode = self.theatre.isChecked()
         s.rivalry_mode = self.rivalry.isChecked()
+        s.camera_cuts = self.cuts.isChecked()
         s.speech_enabled = self.speech_on.isChecked()
         new_engine = self.engine.currentData()
         if new_engine != s.speech_engine:

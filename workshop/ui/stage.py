@@ -200,6 +200,9 @@ class StageWidget(QWidget):
                       for _ in range(22)]
         self._code_lines = {a: self._fake_code_widths(a) for a in AGENTS}
         self.screens: dict = {}  # agent -> ScreenFeed (set by the Director)
+        self.shot_agent: str | None = None  # camera: None = the room, else that agent's monitor close-up
+        self.shot_blend = 0.0
+        self._shot_shown: str | None = None
         self._screen_cache: dict = {}
 
     # -- time / animation settings -------------------------------------------
@@ -249,6 +252,8 @@ class StageWidget(QWidget):
             or abs(self.cam_zoom - 1.0) > 0.002 or abs(self.cam_x) > 0.5 or t < self.sweep_until
             or t - self.shake_at < 0.7
             or any(f.mode == "editor" and f.revealed < len(f.lines) for f in self.screens.values())
+            or self.shot_blend not in (0.0, 1.0)
+            or self.shot_agent is not None
         )
 
     def _tick(self) -> None:
@@ -281,6 +286,10 @@ class StageWidget(QWidget):
                     b.shown = max(b.shown, min(len(b.text), lead + 6))
                 else:
                     b.shown = len(b.text)
+        # camera cut blend
+        want = 1.0 if self.shot_agent else 0.0
+        speed = dt / (0.3 if self.reduced_motion else 0.55)
+        self.shot_blend = min(want, self.shot_blend + speed) if want > self.shot_blend else max(want, self.shot_blend - speed)
         # new code on the monitors types itself out line by line
         for feed in self.screens.values():
             if feed.mode == "editor" and feed.revealed < len(feed.lines):
@@ -489,7 +498,19 @@ class StageWidget(QWidget):
         L = self._layout()
         t = self.now()
         self._ensure_caches(L)
+        blend = _ease_out(self.shot_blend) if self.shot_blend < 1 else 1.0
+        if blend >= 0.999 and self._shot_shown:
+            # fully cut to the monitor: skip the room entirely
+            self._paint_closeup(p, L, t, 1.0)
+            for card in self.cards.values():
+                self._paint_card(p, L, card, t)
+            self._paint_badges(p, L, t)
+            self._paint_particles(p)
+            p.end()
+            return
         p.save()
+        if blend > 0.001 and self._shot_shown:
+            self._apply_push_in(p, L, blend)
         self._apply_camera(p, L, t)
         p.drawPixmap(0, 0, self._backdrop)
         self._paint_live_set(p, L, t)
@@ -516,11 +537,128 @@ class StageWidget(QWidget):
             self._paint_on_air(p, L, t)
         for agent in AGENTS:
             self._paint_bubble(p, L, agent, t)
+        if blend > 0.001 and self._shot_shown:
+            self._paint_closeup(p, L, t, min(1.0, blend * 1.4 - 0.2))
         for card in self.cards.values():
             self._paint_card(p, L, card, t)
         self._paint_badges(p, L, t)
         self._paint_particles(p)
         p.end()
+
+    # -- camera cuts: the working agent's monitor, full stage ----------------------------
+
+    def set_shot(self, agent: str | None) -> None:
+        """Cut to ``agent``'s monitor close-up, or back to the room (None)."""
+        if agent == self.shot_agent:
+            return
+        self.shot_agent = agent
+        if agent is not None:
+            self._shot_shown = agent
+        if not self.animations:
+            self.shot_blend = 1.0 if agent else 0.0
+        self.wake()
+
+    def _apply_push_in(self, p: QPainter, L: dict, blend: float) -> None:
+        """While cutting in, the room camera pushes toward the monitor, so the cut reads as 'look at his screen'."""
+        if self.reduced_motion:
+            return
+        screen = L["monitors"][self._shot_shown][0]
+        c = screen.boundingRect().center()
+        zoom = 1 + 1.6 * blend
+        target = QPointF(L["w"] / 2, L["h"] * 0.46)
+        p.translate(c.x() + (target.x() - c.x()) * blend, c.y() + (target.y() - c.y()) * blend)
+        p.scale(zoom, zoom)
+        p.translate(-c.x(), -c.y())
+
+    def closeup_rect(self, L: dict) -> QRectF:
+        w, h = L["w"], L["h"]
+        return QRectF(w * 0.035, h * 0.04, w * 0.93, h * 0.86)
+
+    def _paint_closeup(self, p: QPainter, L: dict, t: float, alpha: float) -> None:
+        agent = self._shot_shown
+        if not agent or alpha <= 0:
+            return
+        w, h = L["w"], L["h"]
+        p.save()
+        p.setOpacity(max(0.0, min(1.0, alpha)))
+        p.fillRect(QRectF(0, 0, w, h), QColor("#07080a"))
+        frame = self.closeup_rect(L)
+        # the monitor itself: bezel, then the screen rendered at stage resolution (crisp text)
+        p.setPen(_pen("#000000", 2))
+        p.setBrush(QColor("#17181c"))
+        p.drawRoundedRect(frame, 14, 14)
+        screen = frame.adjusted(14, 14, -14, -22)
+        vw = 640
+        vh = max(200, int(vw * screen.height() / max(1.0, screen.width())))
+        feed = self.screens.get(agent)
+        key = ("closeup", id(feed), feed.version if feed else 0, int(feed.revealed) if feed else 0, int(t * 2.5),
+               vw, vh, feed.mode if feed else "")
+        cached = self._screen_cache.get(("big", agent))
+        if not cached or cached[0] != key:
+            cached = (key, render_screen(feed, agent, t, True, vw, vh))
+            self._screen_cache[("big", agent)] = cached
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawImage(screen, cached[1])
+        sheen = QLinearGradient(screen.topLeft(), screen.bottomRight())
+        sheen.setColorAt(0, _c("#ffffff", 0.05))
+        sheen.setColorAt(0.35, _c("#ffffff", 0.0))
+        p.fillRect(screen, sheen)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#39d98a"))
+        p.drawEllipse(QPointF(frame.center().x(), frame.bottom() - 11), 2.2, 2.2)
+        # picture-in-picture: him at his desk (live), and the other one, meanwhile
+        other = "Claude" if agent == "Codex" else "Codex"
+        big = min(h * 0.34, w * 0.2)
+        small = big * 0.62
+        # both insets sit bottom-right: code is left-aligned, so that corner is usually empty
+        main_rect = QRectF(frame.right() - 22 - big, frame.bottom() - big - 50, big, big)
+        self._paint_pip(p, L, agent, main_rect, t, main=True)
+        self._paint_pip(p, L, other, QRectF(main_rect.left() - 26 - small, frame.bottom() - small - 50, small, small),
+                        t, main=False)
+        p.restore()
+
+    def _paint_pip(self, p: QPainter, L: dict, agent: str, rect: QRectF, t: float, main: bool) -> None:
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_c("#000000", 0.5))
+        p.drawRoundedRect(rect.translated(0, 4), 12, 12)
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, 12, 12)
+        p.setClipPath(clip)
+        g = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        g.setColorAt(0, QColor("#2a2320"))
+        g.setColorAt(1, QColor("#120f0e"))
+        p.fillRect(rect, g)
+        # a wash of monitor light from his side
+        feed = self.screens.get(agent)
+        glow = QRadialGradient(QPointF(rect.left() if agent == "Codex" else rect.right(), rect.center().y()),
+                               rect.width() * 0.9)
+        glow.setColorAt(0, _c("#dfe6f2" if feed and feed.mode == "idle" else SCREEN[agent], 0.18))
+        glow.setColorAt(1, _c("#000000", 0.0))
+        p.fillRect(rect, glow)
+        s = rect.width() / 56.0
+        paint_avatar(p, QRectF(rect.left() - 22 * s, rect.top() - 10 * s, 100 * s, 100 * s), agent,
+                     self.models[agent].pose(), layer="body")
+        p.setClipping(False)
+        p.setPen(_pen(ACCENT[agent], 2.2 if main else 1.4, 0.95 if main else 0.6))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect, 12, 12)
+        # caption under the inset
+        view = self.views[agent]
+        p.setFont(_font(max(11, rect.width() * 0.085), bold=True, family="Bahnschrift"))
+        p.setPen(_c(ACCENT[agent]))
+        caption = CHARACTER[agent].upper() if main else f"{CHARACTER[agent].upper()}, MEANWHILE"
+        p.drawText(QRectF(rect.left() - 40, rect.bottom() + 3, rect.width() + 80, 18),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, caption)
+        if main:
+            p.setFont(_font(max(10, rect.width() * 0.065), bold=True))
+            p.setPen(_c("#c9c2b4"))
+            fm = QFontMetricsF(p.font())
+            status = view.label + (f" · {view.activity}" if view.activity else "")
+            p.drawText(QRectF(rect.left() - 60, rect.bottom() + 20, rect.width() + 120, 18),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       fm.elidedText(status, Qt.TextElideMode.ElideRight, rect.width() + 116))
+        p.restore()
 
     def _apply_camera(self, p: QPainter, L: dict, t: float) -> None:
         dx = dy = 0.0

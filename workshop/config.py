@@ -52,6 +52,7 @@ class Settings:
     hostility: str = "Gilfoyle & Dinesh"
     petty_scoreboard: bool = True
     comic_timing: bool = True
+    camera_cuts: bool = True  # cut to the working agent's monitor, full-size
     theme_version: int = THEME_VERSION
 
     @classmethod

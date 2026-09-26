@@ -149,6 +149,7 @@ class MainWindow(QMainWindow):
                                  speech_enabled=settings.speech_enabled, demo_auto_reply=demo_auto_reply,
                                  sleep_after=40.0 if demo else 150.0, parent=self)
         self.director.comic_timing = settings.comic_timing
+        self.director.camera_cuts = settings.camera_cuts
         self.director.set_muted(settings.speech_muted)
         if pace:  # let a character finish its line before the next agent starts
             orchestrator.launch_gate = self.director.presentation_idle
@@ -341,6 +342,9 @@ class MainWindow(QMainWindow):
         self.director.speech_enabled = s.speech_enabled
         self.director.rivalry = s.rivalry_mode
         self.director.comic_timing = s.comic_timing
+        self.director.camera_cuts = s.camera_cuts
+        if not s.camera_cuts:
+            self.stage.set_shot(None)
         self.stage.set_motion(s.animations, s.reduced_motion, s.typewriter)
         for agent, persona in load_personas(s.last_preset).items():
             self.stage.set_persona(agent, persona)

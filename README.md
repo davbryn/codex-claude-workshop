@@ -165,6 +165,13 @@ to you, and it shows what he is actually doing:
   one: Stack Underflow, Anton's status page, "is gilfoyle a real name", a gold-chain
   shop. It's set dressing and never presented as something the agents said.
 
+**Camera cuts.** While an agent works, the stage pushes in on his monitor and shows
+it full-size, rendered at the stage's own resolution so the code is readable in any
+window. He stays in a live inset in the corner, with the other one in a smaller
+"meanwhile" inset. The camera cuts back to the room for every spoken line, for cards,
+for the boss walking in, and briefly for test results so you see the reaction. You can
+turn this off in Settings → Appearance.
+
 **Usage limits.** When Claude or Codex runs out of usage mid-turn, the workshop treats
 it as a pause, not a crash. The card shows who is out and when the limit resets
 (Claude reports the exact time). The workshop then resumes automatically a minute

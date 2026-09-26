@@ -31,22 +31,25 @@ def _elide(fm: QFontMetricsF, text: str, width: float) -> str:
     return fm.elidedText(text.replace("\t", "    "), Qt.TextElideMode.ElideRight, width)
 
 
-def render_screen(feed: ScreenFeed | None, agent: str, t: float, active: bool) -> QImage:
+def render_screen(feed: ScreenFeed | None, agent: str, t: float, active: bool, width: int = W,
+                  height: int = H) -> QImage:
+    """Render at any canvas size: the small monitor texture, or the full-stage close-up."""
+    W, H = width, height
     img = QImage(W, H, QImage.Format.Format_ARGB32_Premultiplied)
     img.fill(QColor("#07090c"))
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
     if feed is None:
-        _paint_blank(p, agent, t)
+        _paint_blank(p, W, H, agent, t)
     elif feed.mode == "idle" and feed.page is not None:
-        _paint_browser(p, feed, t)
+        _paint_browser(p, W, H, feed, t)
     elif feed.mode == "terminal":
-        _paint_terminal(p, feed, agent, t)
+        _paint_terminal(p, W, H, feed, agent, t)
     elif feed.mode in ("editor", "reader"):
-        _paint_editor(p, feed, agent, t)
+        _paint_editor(p, W, H, feed, agent, t)
     else:
-        _paint_blank(p, agent, t)
+        _paint_blank(p, W, H, agent, t)
     # scanlines + a little bloom so it reads as a screen, not a sticker
     p.setPen(QPen(QColor(0, 0, 0, 38), 1))
     for y in range(0, H, 3):
@@ -57,7 +60,7 @@ def render_screen(feed: ScreenFeed | None, agent: str, t: float, active: bool) -
     return img
 
 
-def _paint_blank(p: QPainter, agent: str, t: float) -> None:
+def _paint_blank(p: QPainter, W: int, H: int, agent: str, t: float) -> None:
     p.fillRect(QRectF(0, 0, W, H), QColor("#0b0e13"))
     p.setFont(_font(13))
     p.setPen(QColor(ACCENT.get(agent, "#8fb8ff")))
@@ -65,7 +68,7 @@ def _paint_blank(p: QPainter, agent: str, t: float) -> None:
     p.drawText(QPointF(12, 28), f"{PROMPT.get(agent, 'PS>')} {cursor}")
 
 
-def _title_bar(p: QPainter, title: str, colour: str, icon: str) -> float:
+def _title_bar(p: QPainter, W: int, H: int, title: str, colour: str, icon: str) -> float:
     p.fillRect(QRectF(0, 0, W, 22), QColor("#1a1d23"))
     p.fillRect(QRectF(8, 3, min(W - 16, 20 + len(title) * 7.2), 19), QColor("#0e1116"))
     p.fillRect(QRectF(8, 3, 3, 19), QColor(colour))
@@ -76,10 +79,10 @@ def _title_bar(p: QPainter, title: str, colour: str, icon: str) -> float:
     return 26.0
 
 
-def _paint_editor(p: QPainter, feed: ScreenFeed, agent: str, t: float) -> None:
+def _paint_editor(p: QPainter, W: int, H: int, feed: ScreenFeed, agent: str, t: float) -> None:
     p.fillRect(QRectF(0, 0, W, H), QColor("#0e1116"))
     reader = feed.mode == "reader"
-    top = _title_bar(p, feed.title, "#8fb8ff" if reader else ACCENT[agent], "📖" if reader else "✎")
+    top = _title_bar(p, W, H, feed.title, "#8fb8ff" if reader else ACCENT[agent], "📖" if reader else "✎")
     font = _font(12.5)
     p.setFont(font)
     fm = QFontMetricsF(font)
@@ -118,9 +121,9 @@ def _paint_editor(p: QPainter, feed: ScreenFeed, agent: str, t: float) -> None:
                           y - lh + 3, 7, lh - 6), QColor(ACCENT[agent]))
 
 
-def _paint_terminal(p: QPainter, feed: ScreenFeed, agent: str, t: float) -> None:
+def _paint_terminal(p: QPainter, W: int, H: int, feed: ScreenFeed, agent: str, t: float) -> None:
     p.fillRect(QRectF(0, 0, W, H), QColor("#050607"))
-    top = _title_bar(p, "Windows PowerShell", "#3a7bd5", "▶")
+    top = _title_bar(p, W, H, "Windows PowerShell", "#3a7bd5", "▶")
     font = _font(12.5)
     p.setFont(font)
     fm = QFontMetricsF(font)
@@ -149,7 +152,7 @@ def _paint_terminal(p: QPainter, feed: ScreenFeed, agent: str, t: float) -> None
         p.drawText(QPointF(6, min(H - 4, y + lh - 4)), "█")
 
 
-def _paint_browser(p: QPainter, feed: ScreenFeed, t: float) -> None:
+def _paint_browser(p: QPainter, W: int, H: int, feed: ScreenFeed, t: float) -> None:
     page = feed.page
     # chrome
     p.fillRect(QRectF(0, 0, W, H), QColor("#f4f5f7"))

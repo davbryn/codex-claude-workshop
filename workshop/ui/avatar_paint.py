@@ -497,7 +497,7 @@ def _paint_dinesh(p: QPainter, pose: Pose, L: dict, active: bool) -> None:
     polo.lineTo(44, 104)
     polo.closeSubpath()
     p.save()
-    p.setClipPath(polo)
+    p.setClipPath(polo, Qt.ClipOperation.IntersectClip)
     p.fillRect(QRectF(40, 60, 20, 45), QColor(L["shirt"]))
     p.setPen(Qt.PenStyle.NoPen)
     for i, colour in enumerate(("#7d8aa6", "#c9cbd3", "#7d8aa6")):
