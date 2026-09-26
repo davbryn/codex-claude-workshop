@@ -8,6 +8,7 @@ which uses the ordinary Human Turn API).
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -17,12 +18,17 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .. import orchestrator as orch
 from ..conversation import AGENTS, ConversationTurn, parse_conversation
 from ..orchestrator import Orchestrator, other_agent
+from .banter import petty_scoreboard
+from .cast import COMPLETE_FOOTER, COMPLETE_TAGLINE, MOMENTS, SMALL_LABELS, character, status_label
 from .reactions import ActivityTracker, EntryReaction, asks_for_review, classify_entry
 from .sfx import SoundEffects
 from .speech import SpeechEngine
 from .stats import RunStats, completion_lines, summarise_conversation
 from .text import bubble_excerpt, speech_text, strip_markdown
 
+WORRY_RX = re.compile(r"\b(?:stop|argu\w*|fight\w*|focus|enough|please|wrong|why|seriously|guys|bicker\w*)\b", re.I)
+
+# Generic labels (kept for reference/tests); the stage shows the per-character ones from cast.py.
 LABELS = {
     "starting": "⏳ STARTING",
     "reading": "📖 READING",
@@ -41,10 +47,7 @@ LABELS = {
     "speaking": "💬 SPEAKING",
 }
 
-DEMO_HUMAN_REPLY = (
-    "Hide completed items by default and add an `--all` flag to show everything. "
-    "Also: please stop arguing about the factory. (This is the demo's automatic human reply.)"
-)
+from ..agents.demo_script import DEMO_HUMAN_REPLY  # noqa: E402  (re-exported for callers/tests)
 
 
 @dataclass
@@ -91,6 +94,11 @@ class Director(QObject):
         self._countdown = 0
         self._idle_callbacks: list = []
         self._voice_live = False
+        self.comic_timing = True  # short reaction beats before/after lines (never more than ~1s)
+        self.scoreboard = petty_scoreboard([])
+        self._last_moment = -99.0
+        self._last_small = -99.0
+        self._after_beat = 0
         stage.level_source = self._voice_level
 
         self._end_timer = QTimer(self)
@@ -154,6 +162,7 @@ class Director(QObject):
         if not self._initialised:
             self._initialised = True
             self._seen = len(turns)
+            self.scoreboard = petty_scoreboard(turns)
             for agent in AGENTS:
                 mine = [t for t in turns if t.speaker == agent]
                 if mine:
@@ -179,6 +188,7 @@ class Director(QObject):
                 self.stats.record_entry(turn, handed_off=bool(turn.handoff), disagreement=reaction.disagreement)
                 self._enqueue(Performance(turn, previous, bubble_excerpt(turn.content) or "…",
                                           speech_text(turn.content) or None, reaction))
+        self.scoreboard = petty_scoreboard(turns)
         popcorn = self.stats.disagreement_streak >= 3
         if popcorn and not self.popcorn:
             self.stage.badge("🍿 THIS IS GETTING GOOD", "center", "#ffe08a", 3.2)
@@ -200,7 +210,7 @@ class Director(QObject):
     def _next_performance(self) -> None:
         # Human cards don't occupy the stage's "current" slot, so keep going
         # until an agent performance is playing (or the queue is empty).
-        while self.current is None and self.queue:
+        while self.current is None and self.queue and not self._gap_timer.isActive():
             self._play(self.queue.popleft())
         if self.presentation_idle():
             callbacks, self._idle_callbacks = self._idle_callbacks, []
@@ -236,21 +246,48 @@ class Director(QObject):
         if om.base == "sleeping":
             om.set_base("waiting")
             om.react("surprised", 1.4)
+        moment = r.moment() if r else None
+        # Comic timing: a short silent beat before the line for the big moments.
+        preroll = 0
+        if self.comic_timing and self.rivalry and moment in ("dinesh_catches", "gilfoyle_catches", "both_wrong"):
+            if moment == "dinesh_catches":
+                m.react("gloating", None)  # Dinesh grins first…
+                QTimer.singleShot(450, lambda: om.react("sideeye", 3.0))  # …Gilfoyle slowly looks over
+            elif moment == "gilfoyle_catches":
+                m.react("smug", None)  # the tiniest smile
+                QTimer.singleShot(350, lambda: om.react("outraged", 2.6))
+            else:
+                m.react("embarrassed", None)
+                om.react("stare", 2.5)
+            m.look_at_other(2.0)
+            preroll = 900
+        self.stage.set_status(agent, self.orch_state[agent], status_label(agent, "speaking"))
+        if preroll:
+            QTimer.singleShot(preroll, lambda perf=perf: self._deliver(perf))
+        else:
+            self._deliver(perf)
+
+    def _deliver(self, perf: Performance) -> None:
+        """Start the spoken/typed line for the current performance."""
+        if self.current is not perf:
+            return
+        agent, other = perf.turn.speaker, other_agent(perf.turn.speaker)
+        m, om = self.stage.models[agent], self.stage.models[other]
+        r = perf.reaction
         speak = bool(perf.speech) and self.speaking_allowed()
         self.stage.show_speech(agent, perf.bubble, mode="speech" if speak else "typewriter")
         m.set_talking(True)
         if r and r.mentions_other:
             m.look_at_other(2.0)
         primary = r.primary_state() if r else "idle"
-        if primary in ("disagreeing", "embarrassed", "confused", "celebrating", "pleased", "smug", "waiting"):
-            if primary != "waiting":
-                m.react(primary, None)
+        if primary in ("disagreeing", "embarrassed", "confused", "celebrating", "pleased", "smug", "gloating"):
+            m.react(primary, None)
         listener = r.listener_state(self.rivalry) if r else None
-        om.look_at_other(3.5)
-        if listener:
-            om.react(listener)
+        if om.reaction not in ("sideeye", "outraged", "stare"):
+            om.look_at_other(3.5, speed=1.6 if om.deadpan else None)
+            if listener:
+                om.react(listener)
         self._effects_at_start(agent, other, r)
-        self.stage.set_status(agent, self.orch_state[agent], LABELS["speaking"])
         if speak and self.speech.speak(agent, perf.speech):
             self._end_timer.start(int((len(perf.speech) / 9 + 8) * 1000))  # safety net
         else:
@@ -264,38 +301,64 @@ class Director(QObject):
         body = " ".join(line for line in body.splitlines() if not line.strip().startswith("_20")).strip()
         if len(body) > 220:
             body = body[:219].rsplit(" ", 1)[0] + "…"
-        footer = f"➜ over to {turn.handoff}" if turn.handoff else ""
-        title = "👤 HUMAN — PROJECT BRIEF" if start else "👤 THE HUMAN ENTERS"
+        footer = f"➜ over to {character(turn.handoff)} ({turn.handoff})" if turn.handoff else ""
+        title = "📋 THE BRIEF (FROM MANAGEMENT)" if start else "👤 THE BOSS WALKS IN"
         if instant:
             return
-        self.stage.show_card("human", title, [body], "#8fb8ff", duration=5.0, footer=footer)
+        self.stage.show_card("human", title, [body], "#7bd88f", duration=5.5, footer=footer)
+        stern = bool(WORRY_RX.search(body))
         for agent in AGENTS:
             m = self.stage.models[agent]
             if m.base == "sleeping":
                 m.set_base("waiting")
             m.look_at_human(4.5)
-            if not start:
-                m.react("surprised", 1.2)
+            if start:
+                continue
+            # They both stop and look up. Dinesh worries; Gilfoyle is unimpressed.
+            if m.deadpan:
+                m.react("stare", 3.0)
+            else:
+                m.react("worried" if stern else "surprised", 3.0 if stern else 1.4)
         self._sfx("human")
+        if not start:
+            # everyone stops for a moment; the next line (and the next launch) waits for it
+            self._gap_timer.start(2600)
 
     def _effects_at_start(self, agent: str, other: str, r: EntryReaction | None) -> None:
         if r is None:
             return
-        if r.disagreement:
-            self.stage.badge("⚔ TECHNICAL DISAGREEMENT", "center", "#ff9a8a", 3.0)
-            if self.rivalry:
+        now = time.monotonic()
+        moment = r.moment() if self.rivalry else ("disagreement" if r.disagreement else None)
+        # Big captions are rare: at most one every ~12s (disagreements are the most common, so they wait longest).
+        cooldown = 25.0 if moment == "disagreement" else 12.0
+        if moment and now - self._last_moment >= cooldown:
+            self._last_moment = now
+            text, colour = MOMENTS[moment]
+            self.stage.badge(text, "center", colour, 3.4)
+            sound = {"dinesh_catches": "yes", "gilfoyle_catches": "blast", "concession": "wahwah",
+                     "own_goal": "wahwah", "disagreement": "zap", "both_wrong": "oops",
+                     "character_development": "chime", "same_solution": "oops"}.get(moment)
+            if sound:
+                self._sfx(sound)
+            if moment == "disagreement" and self.rivalry:
                 self.stage.lightning(1.4)
-                self.stage.shake(7)
-            self._sfx("zap")
-        if r.admits_mistake:
-            self.stage.badge("CORRECTION ACKNOWLEDGED", agent, "#8fd9ff", 2.8)
-        if r.fixed_other_bug and self.rivalry:
-            self.stage.badge("GOOD CATCH", agent, "#7dffc4", 2.8)
+                self.stage.shake(4)
+        elif self.rivalry and now - self._last_small >= 20.0 and now - self._last_moment >= 6.0:
+            # an occasional small label beside a head
+            for who, state in ((agent, r.primary_state()), (other, r.listener_state(True) or "")):
+                label = SMALL_LABELS.get((who, state))
+                if label:
+                    self._last_small = now
+                    self.stage.badge(label, who, "#d9d2c3", 2.4)
+                    break
+        if r.fixed_other_bug and self.rivalry and moment not in ("dinesh_catches", "gilfoyle_catches"):
+            self.stage.badge("GOOD CATCH", agent, "#7bd88f", 2.8)
             self._sfx("pop")
-        if r.fixed_own_mistake:
-            self.stage.badge("✨ CHARACTER DEVELOPMENT", "center", "#d6b4ff", 3.2)
         if r.proposes_completion:
             self.stage.badge("PROPOSES: PROJECT COMPLETE", "center", "#8fd9ff", 3.2)
+        # Dinesh celebrating too much → Gilfoyle simply stares at him.
+        if agent == "Claude" and r.primary_state() in ("celebrating", "gloating") and self.rivalry:
+            QTimer.singleShot(700, lambda: self.stage.models["Codex"].react("stare", 3.0))
 
     def _voice_level(self, agent: str) -> float | None:
         """Live loudness for the talking character (None → synthetic mouth)."""
@@ -332,18 +395,28 @@ class Director(QObject):
                 m.react(primary)
             if primary == "celebrating" and not (r and r.declares_complete):
                 self.stage.burst(agent)
+            beat = 350
             if turn.handoff:
-                # a little throw-and-catch: point, send the orb, the other one catches it
+                # lob a crumpled sticky note across the room; the other one catches it
                 m.gesture("point", 0.9)
                 m.look_at_other(2.5)
                 self.stage.handoff(agent, turn.handoff)
                 self._sfx("handoff")
                 receiver = self.stage.models[turn.handoff]
-                receiver.look_at_other(2.0)
-                QTimer.singleShot(720, lambda r=receiver: (r.gesture("catch", 0.7), r.hop(0.3, anticipation=False),
-                                                           r.nudge_wobble(90)))
+                jabbed = bool(r and (r.jab or r.caught_other_bug or r.disagreement)) and self.rivalry
+                if jabbed and self.comic_timing:
+                    # insult → small pause → the target turns and glowers → then his turn starts
+                    reply = "sideeye" if receiver.deadpan else "glare"
+                    QTimer.singleShot(250, lambda rv=receiver, s=reply: rv.react(s, 2.2))
+                    beat = 950
+                else:
+                    receiver.look_at_other(2.0)
+                QTimer.singleShot(720, lambda rv=receiver: (rv.gesture("catch", 0.7),
+                                                            rv.hop(0.2, anticipation=False), rv.nudge_wobble(60)))
             self._restore_label(agent)
             self._apply_status(agent)
+            self._gap_timer.start(beat)
+            return
         self._gap_timer.start(350)
 
     # -- process / output --------------------------------------------------------
@@ -390,10 +463,15 @@ class Director(QObject):
         elif state == orch.A_ERROR:
             m.set_base("error")
             m.react("error")
-            self.stage.shake(4)
+            if not m.deadpan:
+                self.stage.shake(4)
             self._sfx("buzz")
             self.stats.record_error()
-            self.stage.badge("⚠ ERROR", agent, "#ff8a80", 2.6)
+            self.stage.badge("⚠ ERROR" if not m.deadpan else "⚠ ERROR. HE SEEMS FINE.", agent, "#ff8a80", 2.6)
+            # the other one notices
+            om = self.stage.models[other_agent(agent)]
+            if self.rivalry and not om.talking:
+                om.react("sideeye" if om.deadpan else "gloating", 2.4)
         elif state == orch.A_COMPLETE:
             m.set_base("complete")
         elif state == orch.A_STOPPED:
@@ -410,29 +488,30 @@ class Director(QObject):
 
     def _restore_label(self, agent: str) -> None:
         state = self.orch_state[agent]
+        labels = {key: status_label(agent, key) for key in LABELS}
         if self.current and self.current.turn.speaker == agent:
-            label = LABELS["speaking"]
+            label = labels["speaking"]
         elif self.o.state == orch.WAITING_HUMAN and not self.o.is_busy():
-            label = LABELS["human"]
+            label = labels["human"]
         elif state == orch.A_STARTING:
-            label = LABELS["starting"]
+            label = labels["starting"]
         elif state in (orch.A_READING, orch.A_WORKING):
             kind = self.last_kind[agent]
             if kind == "test":
-                label = LABELS["testing"]
+                label = labels["testing"]
             elif kind == "plan":
-                label = LABELS["planning"]
+                label = labels["planning"]
             elif kind == "read" or (kind is None and state == orch.A_READING):
-                label = LABELS["reviewing" if self.review_turn[agent] else "reading"]
+                label = labels["reviewing" if self.review_turn[agent] else "reading"]
             else:
-                label = LABELS["coding"]
+                label = labels["coding"]
         elif state == orch.A_HANDING_OFF:
-            label = LABELS["writing"]
+            label = labels["writing"]
         elif state == orch.A_WAITING:
-            label = LABELS["sleeping"] if self.stage.models[agent].base == "sleeping" else LABELS["waiting"]
+            label = labels["sleeping"] if self.stage.models[agent].base == "sleeping" else labels["waiting"]
         else:
-            label = {orch.A_PAUSED: LABELS["paused"], orch.A_ERROR: LABELS["error"],
-                     orch.A_COMPLETE: LABELS["complete"], orch.A_STOPPED: LABELS["stopped"]}.get(state, state)
+            label = {orch.A_PAUSED: labels["paused"], orch.A_ERROR: labels["error"],
+                     orch.A_COMPLETE: labels["complete"], orch.A_STOPPED: labels["stopped"]}.get(state, state)
         self.stage.set_status(agent, state, label)
 
     def _set_status(self, agent: str, text: str) -> None:
@@ -487,6 +566,9 @@ class Director(QObject):
             self._react_once(agent, "error", 2.2)
             self.stage.badge(f"✗ {cue.tests_failed} FAILED", agent, "#ff8a80", 2.6)
             self._sfx("oops", 2.5)
+            if self.rivalry:  # the other one is watching
+                om = self.stage.models[other_agent(agent)]
+                self._react_once(om.agent, "sideeye" if om.deadpan else "smug", 2.4, cooldown=8.0)
             self.stats_changed.emit()
         elif cue.error:
             self._react_once(agent, "confused", 2.0, cooldown=6.0)
@@ -529,12 +611,13 @@ class Director(QObject):
         signal = self.o.last_signal
         question = signal.detail if signal else ""
         question = question.split(":", 1)[-1].strip() or question
-        stage.show_card("waiting", "👀 BOTH AGENTS ARE WAITING FOR YOU", [question or "A human decision is needed."],
+        stage.show_card("waiting", "👀 THEY NEED A GROWN-UP", [question or "A human decision is needed."],
                         "#f5c542", footer="Answer with the Human Turn button")
         for agent in AGENTS:
             m = stage.models[agent]
             m.set_base("waiting")
             m.look_at_human(9999)
+            m.react("stare" if m.deadpan else "worried", 2.5)
             self._restore_label(agent)
         self._sfx("alert")
         if self.demo_auto_reply:
@@ -546,17 +629,28 @@ class Director(QObject):
         if self.o.state != orch.COMPLETE:
             return
         stage = self.stage
-        for agent in AGENTS:
-            m = stage.models[agent]
+        gil, din = stage.models["Codex"], stage.models["Claude"]
+        for m in (gil, din):
             m.set_base("complete")
-            m.react("celebrating", 4.5)
-            m.look_at_other(4.0)
-        stage.confetti()
-        stage.light_sweep(7.0)
-        self._sfx("fanfare")
-        summary = summarise_conversation(parse_conversation(self.o.conversation_text()))
-        stage.show_card("complete", "🏆 PROJECT COMPLETE", completion_lines(summary, self.stats), "#8fd9ff",
-                        footer="Reviewed and agreed by both agents")
+        # Dinesh celebrates like they landed on Mars…
+        din.react("celebrating", 3.0)
+        din.look_at_other(6.0)
+        stage.confetti(110, only="Claude")
+        stage.burst("Claude", 22)
+        # …then goes for the high five. Gilfoyle eventually, barely, reciprocates.
+        QTimer.singleShot(3000, lambda: din.react("highfive", 2.6))
+        gil.react("pleased", 3.0)
+        QTimer.singleShot(4300, lambda: (gil.look_at_other(2.0, speed=1.4), gil.react("highfive", 1.6)))
+        QTimer.singleShot(6200, lambda: gil.react("smug", 3.0))
+        self._sfx("yes")
+        QTimer.singleShot(500, lambda: self._sfx("fanfare"))
+        turns = parse_conversation(self.o.conversation_text())
+        summary = summarise_conversation(turns)
+        lines = completion_lines(summary, self.stats)
+        board = petty_scoreboard(turns)
+        lines.append("Bugs caught: " + " · ".join(f"{character(a)} {board[a].bugs_caught}" for a in AGENTS))
+        stage.show_card("complete", "PROJECT COMPLETE", lines, "#f2c94c", footer=COMPLETE_FOOTER,
+                        tagline=COMPLETE_TAGLINE)
 
     def _demo_tick(self) -> None:
         if self.o.state != orch.WAITING_HUMAN or self.o.is_busy():

@@ -81,7 +81,10 @@ def plural(n: int, word: str, many: str | None = None) -> str:
 
 def completion_lines(summary: ConversationSummary, stats: RunStats) -> list[str]:
     total = sum(summary.turns.values())
-    lines = [plural(total, "agent turn") + "  (" + " · ".join(f"{a} {n}" for a, n in summary.turns.items()) + ")"]
+    from .cast import character
+
+    lines = [plural(total, "agent turn") + "  (" +
+             " · ".join(f"{character(a)} {n}" for a, n in summary.turns.items()) + ")"]
     lines.append(f"{plural(summary.disagreements, 'disagreement')} spotted · "
                  f"{plural(summary.corrections, 'correction')} acknowledged")
     if summary.human_interventions:

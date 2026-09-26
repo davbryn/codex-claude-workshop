@@ -1,4 +1,4 @@
-"""Offscreen tests for the theatre layer wired into the real main window."""
+﻿"""Offscreen tests for the theatre layer wired into the real main window."""
 
 from PySide6.QtCore import QTimer
 
@@ -95,7 +95,7 @@ def test_completion_celebration_and_waiting_card(qapp, wait, tmp_path):
     assert wait(lambda: o.state == orch.COMPLETE, timeout=40)
     assert wait(lambda: "complete" in w.stage.cards, timeout=20)
     card = w.stage.cards["complete"]
-    assert card.title.endswith("PROJECT COMPLETE")
+    assert card.title.endswith("PROJECT COMPLETE") and card.tagline == "Somehow."
     assert any("agent turns" in line for line in card.lines)
     assert all(v.state == orch.A_COMPLETE for v in w.stage.views.values())
     w.close()
@@ -107,7 +107,7 @@ def test_status_strip_shows_factual_state(qapp, wait, tmp_path):
     assert wait(lambda: w.stage.views["Codex"].turns >= 1)
     w._update_strip()
     assert w.chip_turn.text().startswith("TURN ")
-    assert "Codex" in w.chip_agents["Codex"].text()
+    assert "Gilfoyle" in w.chip_agents["Codex"].text()
     assert w.chip_tests.isHidden()  # the normal fake agents print no test summaries
     o.stop()
     assert wait(lambda: not o.is_busy())

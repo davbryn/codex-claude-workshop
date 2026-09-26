@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
 
     demo_auto_reply = None
     if args.demo:
-        from workshop.agents.demo_script import DEMO_PROMPT
+        from workshop.agents.demo_script import DEMO_FIRST_AGENT, DEMO_PROMPT
 
         args.fake_agents = True
         args.fake_delay = args.fake_delay / max(0.1, args.demo_speed)
@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         project = Path(args.project or tempfile.mkdtemp(prefix="workshop-demo-")).resolve()
         project.mkdir(parents=True, exist_ok=True)
         setup = SetupResult(project, args.prompt or DEMO_PROMPT, settings.codex_personality,
-                            settings.claude_personality, args.first or "Codex", continue_existing=False)
+                            settings.claude_personality, args.first or DEMO_FIRST_AGENT, continue_existing=False)
     elif args.project:
         project = Path(args.project).resolve()
         project.mkdir(parents=True, exist_ok=True)

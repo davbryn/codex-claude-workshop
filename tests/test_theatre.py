@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from workshop import orchestrator as orch
-from workshop.agents.demo_script import DEMO_PROMPT, DEMO_TURNS, demo_entry
+from workshop.agents.demo_script import DEMO_FIRST_AGENT, DEMO_PROMPT, DEMO_TURNS, demo_entry
 from workshop.agents.fake import FakeAdapter
 from workshop.config import Settings, load_personalities, load_personas, save_personality_preset
 from workshop.conversation import ConversationTurn, get_control_signal, parse_conversation, read_conversation
@@ -53,7 +53,8 @@ def test_success_and_strong_success():
 
 def test_fixing_the_other_agents_bug_and_own_mistake():
     other = classify_entry(turn("Claude", "Codex's delete command crashed on index 99. I fixed it."))
-    assert other.fixed_other_bug and other.listener_state() == "embarrassed"
+    assert other.fixed_other_bug and other.listener_state() == "sideeye"  # Gilfoyle barely reacts
+    assert other.listener_state(rivalry=False) == "embarrassed"
     own = classify_entry(turn("Claude", "I also fixed my own earlier bug in the store."))
     assert own.fixed_own_mistake and not own.fixed_other_bug and own.primary_state() == "pleased"
 
@@ -238,9 +239,9 @@ def test_reactions_expire():
 # --- stats -------------------------------------------------------------------------
 
 def test_stats_are_factual():
-    text = start_text() + "".join(demo_entry(t, i // 2 + 1) for i, t in enumerate(DEMO_TURNS[:3]))
+    text = start_text() + "".join(demo_entry(t, i // 2 + 1) for i, t in enumerate(DEMO_TURNS[:5]))
     summary = summarise_conversation(parse_conversation(text))
-    assert summary.turns == {"Codex": 2, "Claude": 1}
+    assert summary.turns == {"Codex": 2, "Claude": 3}
     assert summary.disagreements >= 1 and summary.corrections >= 1
     stats = RunStats()
     lines = completion_lines(summary, stats)
@@ -261,7 +262,7 @@ def test_streaks():
 def start_text() -> str:
     from workshop.conversation import new_conversation_text
 
-    return new_conversation_text(DEMO_PROMPT, "Codex")
+    return new_conversation_text(DEMO_PROMPT, DEMO_FIRST_AGENT)
 
 
 # --- speech fallback ----------------------------------------------------------------
@@ -337,30 +338,35 @@ def test_saving_a_preset_keeps_its_persona(tmp_path):
 
 # --- demo scenario ----------------------------------------------------------------------
 
-def test_demo_script_covers_every_beat():
+def test_demo_script_is_a_gilfoyle_and_dinesh_episode():
     reactions = [classify_entry(turn(t.agent, demo_entry(t, 1))) for t in DEMO_TURNS]
-    assert any(r.success for r in reactions)
-    assert any(r.disagreement for r in reactions)
-    assert any(r.admits_mistake for r in reactions)
-    assert any(r.fixed_other_bug for r in reactions)
-    assert any(r.fixed_own_mistake for r in reactions)
+    moments = [r.moment() for r in reactions]
+    assert DEMO_TURNS[0].agent == DEMO_FIRST_AGENT == "Claude"  # Dinesh opens with the architecture
+    assert "dinesh_catches" in moments  # he finds Gilfoyle's real edge-case bug…
+    assert moments.index("dinesh_catches") < moments.index("concession")  # …Gilfoyle grudgingly concedes
+    assert "own_goal" in moments  # Dinesh's own benchmark proves Gilfoyle right
+    assert any(r.disagreement for r in reactions) and any(r.fixed_own_mistake for r in reactions)
     assert any(r.human_needed for r in reactions)
     assert reactions[-2].proposes_completion and reactions[-1].declares_complete
+    assert sum(r.jab for r in reactions) >= 4  # they bicker most turns
     agents = [t.agent for t in DEMO_TURNS]
     assert all(a != b for a, b in zip(agents, agents[1:]))  # strictly alternating
     failing = [line for t in DEMO_TURNS for line in t.steps if "failed" in line]
     assert failing, "the demo should show a failing test run"
+    text = " ".join(t.thoughts + t.next for t in DEMO_TURNS).lower()
+    for banned in ("great work", "excellent point", "good suggestion", "i appreciate"):
+        assert banned not in text
 
 
 def test_demo_runs_to_completion_through_the_real_protocol(qapp, wait, tmp_path):
     ensure_protocol_file(tmp_path)
-    start_new_conversation(tmp_path, DEMO_PROMPT, "Codex")
+    start_new_conversation(tmp_path, DEMO_PROMPT, DEMO_FIRST_AGENT)
     adapters = {a: FakeAdapter(a, delay=0.01, behavior="demo") for a in ("Codex", "Claude")}
     o = Orchestrator(tmp_path, adapters, {}, poll_ms=50)
     o.start()
     assert wait(lambda: o.state == orch.WAITING_HUMAN and not o.is_busy(), timeout=40)
-    assert "hide completed items" in o.last_signal.detail
-    o.submit_human_turn("Hide them; add --all.", "Claude", title="Demo auto-reply")
+    assert "case-sensitive" in o.last_signal.detail
+    o.submit_human_turn("Case-sensitive.", "Claude", title="Demo auto-reply")
     assert wait(lambda: o.state == orch.COMPLETE and not o.is_busy(), timeout=40)
     text = read_conversation(tmp_path / "conversation.md")
     speakers = [t.speaker for t in parse_conversation(text)]

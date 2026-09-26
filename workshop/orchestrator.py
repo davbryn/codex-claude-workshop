@@ -98,6 +98,8 @@ class Orchestrator(QObject):
         # It can only *delay* a launch, never skip or reorder one, and gives up
         # after launch_gate_max seconds so it can never stall the workshop.
         self.launch_gate: Callable[[], bool] | None = None
+        # Optional character direction for each prompt (agent, conversation text) -> str. Presentation only.
+        self.prompt_theatre: Callable[[str, str], str] | None = None
         self.launch_gate_max = 25.0
         self._gate_timer = QTimer(self)
         self._gate_timer.setSingleShot(True)
@@ -231,8 +233,14 @@ class Orchestrator(QObject):
         other = other_agent(agent)
         text = self._last_text
         turn = next_turn_number(text, agent)
+        theatre = ""
+        if self.prompt_theatre is not None:
+            try:  # presentation only: a failure here must never block a turn
+                theatre = self.prompt_theatre(agent, text)
+            except Exception:
+                theatre = ""
         prompt = build_prompt(
-            agent, other, self.personalities.get(agent, ""), self.project_dir, self.protocol_file, turn
+            agent, other, self.personalities.get(agent, ""), self.project_dir, self.protocol_file, turn, theatre
         )
         self.current_agent = agent
         self._set_agent_state(agent, A_STARTING)

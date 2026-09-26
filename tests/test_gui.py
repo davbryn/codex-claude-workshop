@@ -29,14 +29,14 @@ def test_main_window_full_flow(qapp, wait, tmp_path):
     # Codex hands off to Claude; Claude starts.
     assert wait(lambda: o.current_agent == "Claude")
     assert codex.turns == 1 and "ruin anything" in codex.bubble.text()
-    assert "Codex — Turn 1" in w.conversation.toPlainText()
+    assert "GILFOYLE (Codex)  •  Turn 1" in w.conversation.toPlainText()
     assert "[fake Codex]" in w.outputs["Codex"].toPlainText()
 
     # Pause: Claude finishes, Codex does not start.
     w.pause_button.click()
     assert w.pause_button.text() == "Cancel Pause"
     assert wait(lambda: o.state == orch.PAUSED)
-    assert w.pause_button.text() == "Resume" and w.human_button.isEnabled()
+    assert "Resume" in w.pause_button.text() and w.human_button.isEnabled()
     assert "PAUSED" in w.banner.text()
     n = len(parse_conversation(read_conversation(o.conversation_path)))
 
@@ -54,7 +54,7 @@ def test_main_window_full_flow(qapp, wait, tmp_path):
     assert codex.state == claude.state == orch.A_COMPLETE
     assert not w.pause_button.isEnabled() and not w.stop_button.isEnabled()
     text = w.conversation.toPlainText()
-    assert "Human — Intervention" in text and "PROJECT COMPLETE" in text
+    assert "YOU  •  Intervention" in text and "PROJECT COMPLETE" in text
     w.close()
 
 

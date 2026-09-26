@@ -55,3 +55,49 @@ QToolButton#toggle { padding: 3px 10px; border-radius: 8px; background: #1a2029;
 QToolButton#toggle:checked { background: #2a2230; border-color: #6b4c7a; }
 QLabel#title { font-size: 17pt; }
 """
+
+# --- Hacker-house theme (Gilfoyle & Dinesh) --------------------------------------
+STYLESHEET += """
+QWidget { background: #13110f; color: #ddd5c8; }
+QDialog, QMainWindow { background: #13110f; }
+QFrame#headerBar { background: #1a1714; border: 1px solid #2b2621; border-radius: 8px; }
+QFrame#headerBar QLabel { background: transparent; }
+QLabel#title { font-size: 15pt; font-weight: 800; letter-spacing: 2px; color: #efe8dc; padding: 2px; }
+QLabel#headerDim { color: #9a9185; font-size: 10pt; }
+QLabel#sep { color: #3a342e; background: transparent; border: none; padding: 0; }
+QLabel#live { font-weight: 800; letter-spacing: 1px; color: #e6dfd3; padding-right: 6px; }
+QLabel#modeTag { background: #8c1d1d; color: #ffe9e6; font-weight: bold; padding: 2px 8px; border-radius: 4px; }
+QFrame#panel { background: #1a1714; border: 1px solid #2b2621; border-radius: 8px; }
+QFrame#panel QLabel, QFrame#panel QWidget { background: transparent; }
+QLabel#panelTitle { color: #efe8dc; font-weight: 800; letter-spacing: 1.5px; font-size: 10.5pt; }
+QLabel#dim { color: #9a9185; }
+QLabel#scoreValue { color: #efe8dc; font-weight: 700; min-width: 18px; }
+QLabel#footnote { color: #6b645b; font-size: 8.5pt; font-style: italic; }
+QLabel#working { color: #e6dfd3; font-size: 10.5pt; }
+QProgressBar#busy { background: #2a2520; border: none; border-radius: 3px; }
+QPlainTextEdit#recentOutput {
+    background: #0c0b0a; border: 1px solid #2b2621; color: #b9d8b6;
+    font-family: Consolas, monospace; font-size: 8.8pt;
+}
+QTreeView#files { background: #0f0d0c; border: 1px solid #2b2621; border-radius: 6px; color: #ddd5c8; }
+QTreeView#files::item:selected { background: #3a2a22; }
+QPlainTextEdit, QTextBrowser, QLineEdit { background: #0f0d0c; border: 1px solid #2b2621; color: #ddd5c8; }
+QPushButton, QToolButton { background: #221e1a; border: 1px solid #3a332c; color: #eee6da; }
+QPushButton:hover, QToolButton:hover { background: #2d2722; }
+QPushButton:disabled { color: #5d564e; background: #191613; }
+QPushButton#pauseButton { background: #a8322b; border-color: #d0453b; color: white; font-weight: 700; padding: 8px 18px; }
+QPushButton#pauseButton:hover { background: #bf3b33; }
+QPushButton#pauseButton:disabled { background: #2a2320; border-color: #3a332c; color: #8b8378; }
+QPushButton#stopButton { border-color: #7a3a33; }
+QLineEdit#messageBox { padding: 7px 10px; font-size: 10.5pt; border-radius: 8px; }
+QToolButton#sendButton { font-size: 13pt; padding: 3px 12px; border-radius: 8px; }
+QToolButton#toggle { padding: 3px 10px; border-radius: 8px; background: #221e1a; }
+QToolButton#toggle:checked { background: #3a2226; border-color: #7a3a33; }
+QTabWidget::pane { border: 1px solid #2b2621; border-radius: 6px; }
+QTabBar::tab { background: #1a1714; padding: 6px 14px; color: #9a9185; font-weight: 700; letter-spacing: 1px; }
+QTabBar::tab:selected { background: #26211c; color: #efe8dc; }
+QComboBox { background: #221e1a; border: 1px solid #3a332c; }
+QLabel#chip { background: #221e1a; border: 1px solid #332d27; color: #ddd5c8; }
+QStatusBar { color: #9a9185; }
+QSplitter::handle { background: #13110f; }
+"""

@@ -1,4 +1,4 @@
-"""Compact Settings dialog: Appearance, Audio, Personality."""
+"""Compact Settings dialog: The Cast, Appearance, Audio, Personality."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import Settings, load_personalities
+from ..theatre.cast import HOSTILITY_LEVELS, display_name
 from ..theatre.speech import SpeechEngine
 
 CUSTOM = "Custom"
@@ -42,6 +43,33 @@ class SettingsDialog(QDialog):
         self.resize(640, 520)
         tabs = QTabWidget()
 
+        # The Cast
+        cast = QWidget()
+        cform = QFormLayout(cast)
+        self.cast_on = QCheckBox("Codex plays GILFOYLE, Claude plays DINESH (Silicon Valley cast)")
+        self.cast_on.setChecked(settings.cast_enabled)
+        cform.addRow(self.cast_on)
+        self.hostility = QComboBox()
+        self.hostility.addItems(list(HOSTILITY_LEVELS))
+        self.hostility.setCurrentText(settings.hostility if settings.hostility in HOSTILITY_LEVELS
+                                      else "Gilfoyle & Dinesh")
+        cform.addRow("Hostility:", self.hostility)
+        self.scoreboard = QCheckBox("Show the PETTY SCOREBOARD (deliberately unserious)")
+        self.scoreboard.setChecked(settings.petty_scoreboard)
+        cform.addRow(self.scoreboard)
+        self.timing = QCheckBox("Comic timing: short reaction beats between lines (under a second)")
+        self.timing.setChecked(settings.comic_timing)
+        cform.addRow(self.timing)
+        cast_note = QLabel("The cast is a presentation layer. Every turn prompt tells Codex it is Gilfoyle and "
+                           "Claude it is Dinesh, asks them to react to each other and bans assistant-speak, and "
+                           "feeds a few factual callbacks from this session's public conversation. The protocol, "
+                           "headings, handoffs and conversation.md are unchanged. \"Nuclear\" is ruder but must "
+                           "stay technically productive.")
+        cast_note.setWordWrap(True)
+        cast_note.setObjectName("subtitle")
+        cform.addRow(cast_note)
+        tabs.addTab(cast, "The Cast")
+
         # Appearance
         appearance = QWidget()
         form = QFormLayout(appearance)
@@ -53,7 +81,7 @@ class SettingsDialog(QDialog):
         self.typewriter.setChecked(settings.typewriter)
         self.theatre = QCheckBox("Start in Theatre Mode (F11)")
         self.theatre.setChecked(settings.theatre_mode)
-        self.rivalry = QCheckBox("Rivalry mode: lightning, smug grins and GOOD CATCH badges")
+        self.rivalry = QCheckBox("Rivalry: glares, side-eye, gloating and the occasional caption")
         self.rivalry.setChecked(settings.rivalry_mode)
         for w in (self.animations, self.reduced, self.typewriter, self.theatre, self.rivalry):
             form.addRow(w)
@@ -100,7 +128,7 @@ class SettingsDialog(QDialog):
             row.addWidget(test)
             holder = QWidget()
             holder.setLayout(row)
-            grid.addRow(f"{agent} voice:", holder)
+            grid.addRow(f"{display_name(agent)} voice:", holder)
             self.voice[agent] = combo
         self.rate = _slider(settings.speech_rate * 100, -60, 60)
         self.volume = _slider(settings.speech_volume * 100, 0, 100)
@@ -135,9 +163,9 @@ class SettingsDialog(QDialog):
         self.preset.currentTextChanged.connect(self._apply_preset)
         pl.addWidget(QLabel("Preset:"), 0, 0)
         pl.addWidget(self.preset, 0, 1)
-        pl.addWidget(QLabel("Codex personality:"), 1, 0, 1, 2)
+        pl.addWidget(QLabel(f"{display_name('Codex')} personality:"), 1, 0, 1, 2)
         pl.addWidget(self.codex_text, 2, 0, 1, 2)
-        pl.addWidget(QLabel("Claude personality:"), 3, 0, 1, 2)
+        pl.addWidget(QLabel(f"{display_name('Claude')} personality:"), 3, 0, 1, 2)
         pl.addWidget(self.claude_text, 4, 0, 1, 2)
         hint = QLabel("Changes apply from the next agent turn. Personality shapes tone only.")
         hint.setObjectName("subtitle")
@@ -160,8 +188,8 @@ class SettingsDialog(QDialog):
         self.speech.set_voice(agent, self.voice[agent].currentData())
         self.speech.set_rate(self.rate.value() / 100)
         self.speech.set_volume(self.volume.value() / 100)
-        line = {"Codex": "Codex here. I have reviewed your settings. They are acceptable.",
-                "Claude": "Hello! This is Claude, and I think this voice is simply sound."}[agent]
+        line = {"Codex": "This is my voice. I didn't choose it to please you. It is, however, correct.",
+                "Claude": "Okay, this voice is great. Way better than Gilfoyle's. Objectively. I checked."}[agent]
         self.speech.speak(agent, line)
 
     def _accept(self) -> None:
@@ -183,6 +211,10 @@ class SettingsDialog(QDialog):
         s.speech_volume = self.volume.value() / 100
         s.sfx_enabled = self.sfx_on.isChecked()
         s.sfx_volume = self.sfx_volume.value() / 100
+        s.cast_enabled = self.cast_on.isChecked()
+        s.hostility = self.hostility.currentText()
+        s.petty_scoreboard = self.scoreboard.isChecked()
+        s.comic_timing = self.timing.isChecked()
         if self.preset.currentText() != CUSTOM:
             s.last_preset = self.preset.currentText()
         s.codex_personality = self.codex_text.toPlainText()

@@ -29,7 +29,9 @@ MODEL_URLS = {
 }
 SAMPLE_RATE = 24000
 ENVELOPE_HOP = 240  # 10 ms loudness frames
-DEFAULT_VOICES = {"Codex": "am_michael", "Claude": "af_heart"}
+# Gilfoyle: deep, calm and a touch slow. Dinesh: lighter, quicker, more inflection.
+DEFAULT_VOICES = {"Codex": "am_onyx", "Claude": "am_puck"}
+CHARACTER_SPEED = {"Codex": 0.88, "Claude": 1.12}
 ACCENTS = {"a": "American", "b": "British"}
 
 
@@ -142,8 +144,8 @@ class KokoroSpeechEngine(SpeechEngine):
     def available_voices(self) -> list[str]:
         if self._voices:
             return list(self._voices)
-        return sorted({*DEFAULT_VOICES.values(), "am_puck", "am_fenrir", "bm_george", "bm_fable", "af_bella",
-                       "af_nicole", "bf_emma"})
+        return sorted({*DEFAULT_VOICES.values(), "am_michael", "am_fenrir", "am_echo", "bm_george", "bm_fable",
+                       "af_heart", "bf_emma"})
 
     def voice_label(self, voice: str) -> str:
         return voice_label(voice)
@@ -188,7 +190,8 @@ class KokoroSpeechEngine(SpeechEngine):
             self._started = False
         self._sink.setVolume(self._volume)
         self._io = self._sink.start()
-        threading.Thread(target=self._synthesise, args=(generation, text, self.voice_for(agent), self._speed),
+        speed = max(0.5, min(2.0, self._speed * CHARACTER_SPEED.get(agent, 1.0)))
+        threading.Thread(target=self._synthesise, args=(generation, text, self.voice_for(agent), speed),
                          daemon=True, name="kokoro-say").start()
         self._pump.start()
         return True

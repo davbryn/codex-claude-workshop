@@ -10,10 +10,11 @@ from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import QTextBrowser
 
 from ..conversation import COMPLETE_MARKER, HUMAN_DECISION_MARKER, PROPOSE_COMPLETE_MARKER, parse_conversation
-from .theme import ACCENTS
+from ..theatre.cast import CHARACTER
+from .theme import ACCENTS, CARD_BG as THEME_CARD_BG
 
-SPEAKER_COLOURS = {**ACCENTS, "Human": "#8fb8ff"}
-CARD_BG = {"Codex": "#15201b", "Claude": "#241913", "Human": "#161d2b"}
+SPEAKER_COLOURS = dict(ACCENTS)
+CARD_BG = dict(THEME_CARD_BG)
 
 _HANDOFF_LINE = re.compile(r"^\**\s*@(Codex|Claude)\s*\**$", re.IGNORECASE)
 ICONS = {"Codex": "avatar:codex", "Claude": "avatar:claude"}
@@ -58,7 +59,8 @@ def _render_body(content: str) -> str:
             continue
         elif m := _HANDOFF_LINE.match(stripped):
             name = m.group(1).capitalize()
-            out.append(_badge(f"HANDS OFF ➜ @{name.upper()}", SPEAKER_COLOURS[name]))
+            out.append(f'<div style="margin-top:4px;color:{SPEAKER_COLOURS[name]};font-weight:bold;">'
+                       f'→ @{name}</div>')
         elif stripped.strip("*_` ").rstrip(".!") == PROPOSE_COMPLETE_MARKER:
             out.append(_badge("⚑ PROPOSE PROJECT COMPLETE", "#3a6f8f", "#e6f6ff"))
         elif stripped.strip("*_` ").rstrip(".!") == COMPLETE_MARKER:
@@ -85,15 +87,22 @@ def render_conversation_html(text: str) -> str:
     parts = []
     for turn in turns:
         colour = SPEAKER_COLOURS.get(turn.speaker, "#ccc")
-        title = f" — {html.escape(turn.title)}" if turn.title else ""
-        icon = (f'<img src="{ICONS[turn.speaker]}" width="22" height="22" style="vertical-align:middle;">&nbsp;'
-                if turn.speaker in ICONS else "👤&nbsp;")
+        title = html.escape(turn.title) if turn.title else ""
+        if turn.speaker in CHARACTER:
+            name = (f'{CHARACTER[turn.speaker].upper()} <span style="color:{colour};font-weight:normal;">'
+                    f'({turn.speaker})</span>')
+            icon = f'<img src="{ICONS[turn.speaker]}" width="40" height="40">'
+        else:
+            name = "YOU" if turn.title.lower() != "project start" else "THE BRIEF"
+            icon = '<span style="font-size:26px;">👤</span>'
         parts.append(
-            '<table width="100%" cellspacing="0" cellpadding="8" style="margin-bottom:10px;">'
-            f'<tr><td width="5" bgcolor="{colour}"></td>'
-            f'<td bgcolor="{CARD_BG.get(turn.speaker, "#1a1d23")}">'
-            f'<div style="color:{colour};font-weight:bold;font-size:15px;">{icon}{turn.speaker}{title}</div>'
-            f'<div style="color:#c9d1d9;">{_render_body(turn.content)}</div>'
+            '<table width="100%" cellspacing="0" cellpadding="7" style="margin-bottom:8px;">'
+            f'<tr><td width="46" valign="top" bgcolor="{CARD_BG.get(turn.speaker, "#1a1714")}">{icon}</td>'
+            f'<td bgcolor="{CARD_BG.get(turn.speaker, "#1a1714")}">'
+            f'<div style="color:{colour};font-weight:bold;font-size:14px;letter-spacing:1px;">{name}'
+            f'<span style="color:#8b8378;font-weight:normal;"> &nbsp;•&nbsp; {title}</span></div>'
+            f'<div style="color:#ddd5c8;font-family:Consolas,monospace;font-size:13px;">'
+            f'{_render_body(turn.content)}</div>'
             "</td></tr></table>"
         )
     return "\n".join(parts)
@@ -116,7 +125,7 @@ class ConversationView(QTextBrowser):
             if agent not in self._icons:
                 from .avatar_paint import avatar_pixmap
 
-                self._icons[agent] = avatar_pixmap(agent, 44).toImage()
+                self._icons[agent] = avatar_pixmap(agent, 80).toImage()
             return self._icons[agent]
         return super().loadResource(kind, url)
 

@@ -62,93 +62,118 @@ Controls:
 * **Human Turn:** appends a `## Human — Intervention` entry with your message and a
   handoff to the agent you choose. Available whenever no agent is running.
 * **Open Project / Open Conversation:** open the folder or file in Explorer or your editor.
-* The **Codex Output** and **Claude Output** tabs show the raw CLI output, live and clearly labelled.
+* The **Gilfoyle (Codex)** and **Dinesh (Claude)** output tabs show the raw CLI output, live and clearly labelled.
   Use them to check that what an agent *says* matches what it *did*.
 * **🔊 Voices** (Ctrl+M) mutes or unmutes speech, **🔔 Sounds** toggles sound effects,
   **🎭 Theatre** (F11 / Ctrl+T) switches Theatre Mode, and **⚙ Settings** opens the settings.
 
-## Workshop Theatre
+## Workshop Theatre: Gilfoyle & Dinesh
 
-The top of the window is a small animated stage. Codex is a smug CRT-terminal robot;
-Claude is a warm, expressive blob with a sprout. Both are drawn procedurally
-(`workshop/ui/avatar_paint.py`), with no image assets and no brand logos.
+The presentation layer is themed on HBO's *Silicon Valley*: **Codex plays Gilfoyle** and
+**Claude plays Dinesh**, pair-programming in a cluttered hacker-house office. The agents'
+real identities don't change: headings stay `## Codex — Turn N`, handoffs stay `@Claude`,
+and `conversation.md` remains the source of truth. The cast is theatre on top.
 
-Everything on stage is **theatre, derived only from public information**:
-`conversation.md` entries, observable CLI output (tool calls, commands, test summaries),
-process states, and your configured personalities. Nothing on stage claims to show
-private reasoning, and none of it can affect orchestration.
+**In the prompts.** Every real turn prompt carries a short character layer between the
+core rules and the turn instruction (`workshop/theatre/cast.py`). It:
+* states the mapping explicitly ("For the theatrical collaboration layer, you are
+  GILFOYLE. The other agent, Claude, is DINESH.");
+* asks the agent to read the other's turn, react to something specific, do real
+  engineering, report in character and hand over;
+* bans assistant and performance-review phrasing;
+* describes the relationship and the "insult → claim → evidence → unbearable winner →
+  grudging concession" arc;
+* forbids inventing bugs for a joke;
+* adds up to four **banter callbacks**, short factual notes from this session's public
+  conversation (for example "Dinesh caught a Gilfoyle bug — turn 3: …"). They are
+  derived deterministically (`workshop/theatre/banter.py`) and never touch technical
+  state.
 
-| You see | Driven by |
-| --- | --- |
-| 📖 READING / ⚙ CODING / 🧪 RUNNING TESTS / 🔍 REVIEWING, plus "Editing parser.py…" | tool calls and commands in the raw CLI output |
-| Speech bubble, talking mouth, optional voice | a short excerpt of the entry the agent just appended (code, paths and control lines stripped) |
-| ⚔ Technical disagreement, lightning between the characters | phrases like "I disagree", "over-engineered" or "unnecessary abstraction" in a new entry |
-| Embarrassed character, the other one smug | "my mistake", "I was wrong", "Codex was right", "good catch" |
-| GOOD CATCH | an agent fixing a bug it attributes to the other agent |
-| ✨ CHARACTER DEVELOPMENT | an agent fixing "my own earlier bug" |
-| ✓ 12 PASSED / ✗ 1 FAILED, chime or buzz | pytest, unittest, jest, cargo and similar test summaries in the output |
-| 😮 TESTS PASS NOW | tests passing after they failed in the same turn |
-| 👀 BOTH AGENTS ARE WAITING FOR YOU | `HUMAN DECISION NEEDED:` (the workshop pauses exactly as before) |
-| 👤 THE HUMAN ENTERS | your Human Turn entry |
-| 🏆 PROJECT COMPLETE, confetti, fanfare, run summary | the reviewed completion signal; the summary contains only derivable facts |
-| 💤 Napping | waiting for a long time while the other agent works |
-| 🍿 | three disagreements in a row |
+**Hostility** (Settings → The Cast) has five levels: Civil, Normal, Startup House,
+**Gilfoyle & Dinesh** (the default) and Nuclear. Nuclear is ruder but must stay
+technically productive. The cast can be switched off in the same tab.
 
-**How the characters move.** Expressions blend smoothly from one to the next, because
-faces are drawn from continuous values such as lid cover, lid slant and mouth curve.
-Bodies use small spring simulations: jumps with a crouch first, squash and stretch on
-landing, tilts that overshoot, and a sprout and antenna that wobble.
-* **Arms** move between poses: typing, a hand on the chin, hands on hips, pointing
-  accusingly at the other agent, shrugging, covering the face, and catching.
-* **While talking**, they gesture on emphasis.
-* **Handoffs** are a throw-and-catch.
-* **While waiting**, they blink, breathe, glance at each other, look toward the human,
-  and fidget now and then (stretching, looking around, small hops).
-* **Codex's screen** shows scrolling code while it codes and glitches on errors.
-  **Claude** steams when heated.
-* **The stage** eases the camera in toward whoever is speaking, shakes on disagreements
-  and errors, has dust drifting in the spotlights, and sweeps its lights at the finale.
+**On stage** (all drawn procedurally, with no image assets):
+* **The set:** Gilfoyle's server rack **ANTON** blinking away, a **Pied Piper**
+  whiteboard ("Build / Test / Ship? / Probably", Weissman score in the corner), a
+  **HACKER HOSTEL** banner, a night window with blinds, a desk lamp, energy drinks, a
+  penguin, a pizza box, and a monitor each.
+* **Gilfoyle** is long-haired and bearded, in glasses and a black hoodie, and
+  *under-animated* on purpose. Insults get an eyebrow. When he's proven wrong his eyes
+  flick. When Dinesh celebrates he slowly looks over and stares. His best smile is a
+  small smirk.
+* **Dinesh** wears a maroon hoodie over a striped polo and reacts to everything: he
+  glares after an insult, throws his hands up in outrage, and when he catches a
+  Gilfoyle bug he fist-pumps a **YES.** with the gold chain out.
+* **Comic timing:** after an insult there is a short pause, the target glowers, then
+  his turn starts. When Dinesh catches a bug, he grins first, Gilfoyle slowly
+  side-eyes him, then Dinesh speaks. The beats are under a second each, and you can
+  turn them off in Settings.
+* **Speech bubbles** show the most entertaining *real* sentence of the entry. A scorer
+  prefers lines that name the other agent, jab, concede or criticise over boilerplate;
+  it never invents text. Gilfoyle's bubbles are dry and square; Dinesh's are rounder
+  and a little tilted.
+* **Captions** appear rarely: DINESH WILL NEVER LET THIS GO, THIS WILL BE MENTIONED
+  AGAIN, GRUDGING CONCESSION, OWN GOAL, IMPRESSIVE. (both wrong), UNCOMFORTABLE
+  AGREEMENT, CHARACTER DEVELOPMENT, TECHNICAL DISAGREEMENT. Small side labels such as
+  GILFOYLE SMUG are rarer still.
+* **The boss walks in:** your Human Turn stops them both. Dinesh looks worried if the
+  message sounds stern; Gilfoyle looks unimpressed.
+* **The finale:** confetti falls on Dinesh only. He goes for a high five, which
+  Gilfoyle eventually, barely, returns. Then the card reads *PROJECT COMPLETE —
+  Somehow.* with factual stats.
+* **Sounds:** synthesized locally, including a "YES." sting, a sad-trombone
+  concession, and a one-second grindcore blast when Gilfoyle catches Dinesh out.
 
-Presets carry a small visual persona: Codex is restrained and smug by default,
-Claude bigger and more dramatic.
+**PETTY SCOREBOARD.** Bugs caught, arguments won by evidence, and grudging concessions
+received are counted from the conversation only. It's part of the joke, not a model
+leaderboard.
+
+**Dashboard.** Below the stage are the scoreboard, the current status (turn, elapsed
+time, test counts, who is working) and the last few raw CLI lines. Below those are the
+conversation, with portraits, and the project's files. The message box at the bottom
+sends a Human Turn: if an agent is working, the workshop pauses after its turn and then
+delivers your message.
+
+Everything on stage comes **only from public information**: `conversation.md` entries,
+observable CLI output (tool calls, commands, test summaries) and process states. Nothing
+claims to show private reasoning, and none of it can affect orchestration.
 
 **Pacing.** A character finishes its line before the next agent is launched. The app
 waits at most 25 seconds, so presentation can delay a turn slightly but never block,
 skip or reorder one.
 
-**Audio** is optional and fully local; no cloud account is needed.
-* **Kokoro neural voices** are used automatically once the model is downloaded (the
-  command above). Kokoro-82M runs on your CPU through ONNX Runtime and sounds far more
-  natural than the system voices. Lines stream sentence by sentence, so speech starts
-  about a second after an entry appears. The defaults are Michael for Codex and Heart
-  for Claude; about 20 English voices are available in Settings.
-* **Windows system voices** (Qt text-to-speech: WinRT/SAPI) are the fallback, and can
-  also be chosen in Settings.
-* With Kokoro, the characters' mouths and talking gestures follow the actual loudness of
-  the synthesized voice.
-Sound effects are tiny tones synthesized on first use into `config/cache/sfx`. If no speech
-engine is available, the characters still animate their talking silently.
+**Voices** are optional and fully local; no cloud account is needed.
+* **Kokoro neural voices** (after the one-off download above):
+  * Gilfoyle is *Onyx*, deep and calm, played about 12% slower.
+  * Dinesh is *Puck*, lighter, about 12% faster.
+  * Both can be changed in Settings.
+  * Mouths follow the actual loudness of the voice.
+* **Windows system voices** are the fallback. Gilfoyle is pitched lower and slower,
+  Dinesh higher and quicker.
+* Neither can imitate the actors. The goal is contrast.
 
-**Theatre Mode** (F11) hides the header and diagnostics tabs and gives the stage most
-of the window, which is handy on a second monitor. The raw output tabs come back when
-you leave it.
+**Theatre Mode** (F11) hides the header, dashboard and diagnostics and gives the stage
+most of the window, which is handy on a second monitor.
 
-**Settings** (Appearance / Audio / Personality) are saved to `config/settings.json`:
-animations, reduced motion, typewriter bubbles, rivalry mode, voices and rate,
-sound effects, and personality edits (which apply from the next turn).
+**Settings** (The Cast / Appearance / Audio / Personality) are saved to
+`config/settings.json`. Settings from before the cast are migrated once to the
+Gilfoyle & Dinesh preset and voices.
 
 ### The demo
 
-`python app.py --demo` runs a deterministic story in a temporary folder using the real
-orchestrator and protocol with fake agents:
-1. Codex writes a todo app, and its tests pass.
-2. Claude disagrees loudly and adds a store class.
-3. Codex tries to inline it, the tests fail, and it admits the mistake.
-4. Claude catches a crash in Codex's code.
-5. Codex asks the human a product question, and the demo answers it automatically after a short countdown.
-6. Claude fixes its own earlier bug.
-7. Codex proposes completion.
-8. Claude reviews and declares PROJECT COMPLETE.
+`python app.py --demo` plays a miniature episode in a temporary folder, using the real
+orchestrator and protocol with fake agents. The project is a tiny URL shortener.
+1. Dinesh builds it "properly": a storage interface, two backends, a factory and a plugin registry.
+2. Gilfoyle: "There are no plugins. There will never be plugins." He deletes it down to a dict and a
+   base62 counter, with a real edge-case bug in it.
+3. Dinesh finds that `encode(0)` returns an empty string, so the first link is unreachable. He is
+   unbearable about it, and leaves the failing test for Gilfoyle "for his growth". He also sneaks
+   in an LRU cache.
+4. Gilfoyle concedes, fixes the bug in one line, and immediately goes after the cache: "He cached the cache."
+5. Dinesh benchmarks it to prove Gilfoyle wrong. The benchmark proves Gilfoyle right (4.6× slower). Own goal.
+6. Gilfoyle asks the human a product question, and the demo answers it automatically.
+7. Dinesh proposes completion. Gilfoyle reviews independently: "It was inevitable." PROJECT COMPLETE.
 
 `--fake-agents` plays the same script.
 

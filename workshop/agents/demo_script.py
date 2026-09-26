@@ -1,18 +1,24 @@
-"""Deterministic demo scenario used by ``--demo`` and ``--fake-agents``.
+"""Deterministic demo scenario used by ``--demo`` and ``--fake-agents``: a tiny
+Gilfoyle (Codex) and Dinesh (Claude) episode.
 
 Each DemoTurn lists fake CLI output lines (Codex uses the real `codex exec`
 format, Claude uses our stream-json condensation) and the public entry the
-fake agent appends. It walks through: normal work, test success,
-disagreement, a failing test, an admitted mistake, a caught bug, a human
-decision, character development, a completion proposal, independent review
-and PROJECT COMPLETE.
+fake agent appends. The episode: Dinesh over-architects, Gilfoyle deletes it
+and ships a real edge-case bug, Dinesh catches it and is unbearable about it,
+Gilfoyle fixes it and immediately finds Dinesh's pointless cache, Dinesh
+benchmarks his way into an own goal, the human settles a product question,
+both independently review, PROJECT COMPLETE. Somehow.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-DEMO_PROMPT = "Build a tiny command-line todo app with add, list, done and delete. Keep it small and well tested."
+DEMO_PROMPT = ("Build a tiny command-line URL shortener: shorten, resolve and list. Keep it small, fast and "
+               "well tested.")
+DEMO_FIRST_AGENT = "Claude"
+DEMO_HUMAN_REPLY = ("Case-sensitive. Keep the keyspace. And nobody mention the cache again. "
+                    "(This is the demo's automatic human reply.)")
 
 
 @dataclass(frozen=True)
@@ -33,103 +39,131 @@ def _codex_exec(command: str, *output: str, ok: bool = True) -> tuple[str, ...]:
 
 DEMO_TURNS: tuple[DemoTurn, ...] = (
     DemoTurn(
-        "Codex",
-        ("codex", "I'll read the brief and get something working.",
-         *_codex_exec("Get-Content AGENT_README.md; Get-Content conversation.md"), "",
-         "[tool] Write: todo.py", "[tool] Write: test_todo.py", "",
-         *_codex_exec("python -m pytest -q", "....", "4 passed in 0.03s")),
-        "Claude hasn't touched anything yet, so the codebase is currently flawless. "
-        "I wrote a 38-line todo app that keeps todos in a plain list. You're welcome.",
-        "Created `todo.py` with add, list, done and delete, plus `test_todo.py`.",
-        "All 4 tests pass.",
-        "Claude, review the storage layer. Please resist the urge to add a factory.",
-        "@Claude",
-    ),
-    DemoTurn(
         "Claude",
-        ("[tool] Read: todo.py", "[tool] Read: test_todo.py", "",
-         "[tool] Write: storage.py", "[tool] Edit: todo.py", "[tool] Edit: test_todo.py", "",
-         "[tool] Bash: python -m pytest -q", "[tool result] 6 passed in 0.04s"),
-        "I disagree! A global list with no persistence is a crime against architecture. "
-        "Your todos vanish the moment the program exits. That's not minimalism, that's amnesia.",
-        "Introduced a small `TodoStore` class that saves to `todos.json`, and added two persistence tests.",
-        "6 tests pass. Todos now survive a restart, which I consider a basic human right.",
-        "Codex, please review `TodoStore`. It is one class. It is not a factory. I checked.",
+        ("[tool] Read: AGENT_README.md", "[tool] Read: conversation.md", "",
+         "[tool] Write: shortener/backends.py", "[tool] Write: shortener/factory.py",
+         "[tool] Write: shortener/registry.py", "[tool] Write: shortener/encoders.py",
+         "[tool] Write: test_shortener.py", "",
+         "[tool] Bash: python -m pytest -q", "[tool result] 6 passed in 0.08s"),
+        "Gilfoyle hasn't touched anything yet, so for one brief, shining moment this codebase has architecture. "
+        "I built it properly: a `StorageBackend` interface, an in-memory backend, a SQLite backend for when we "
+        "scale, and a `ShortenerFactory` with a plugin registry so new encoders can just be dropped in. "
+        "Before anyone says anything: yes, it's extensible. That's the point of it.",
+        "Created `shortener/` with `backends.py`, `factory.py`, `registry.py` and `encoders.py` (212 lines), "
+        "plus `test_shortener.py`.",
+        "All 6 tests pass. Shorten, resolve and list work on both backends.",
+        "Gilfoyle, review the architecture. Try to appreciate the extensibility instead of just deleting it.",
         "@Codex",
     ),
     DemoTurn(
         "Codex",
-        ("codex", "Inlining TodoStore. Four lines should do it.",
-         "[tool] Edit: storage.py", "",
-         *_codex_exec("python -m pytest -q", "..F...",
-                      "FAILED test_todo.py::test_todos_survive_restart - AssertionError",
-                      "1 failed, 5 passed in 0.05s", ok=False), "",
-         "codex", "Hm.", "[tool] Edit: storage.py", "",
-         *_codex_exec("python -m pytest -q", "......", "6 passed in 0.04s")),
-        "I tried to inline Claude's TodoStore into four lines and the persistence test failed immediately. "
-        "My mistake. Claude was right that the save path matters.",
-        "Restored the store, then trimmed it from 41 lines to 23, because some standards must be maintained.",
-        "All 6 tests pass. I have been mildly humbled.",
-        "Claude, check `delete` with an out-of-range index. I have a feeling.",
+        ("codex", "Reading Dinesh's architecture.",
+         *_codex_exec("Get-ChildItem -Recurse shortener; Get-Content shortener/factory.py"), "",
+         "codex", "Deleting.",
+         "[tool] Write: shortener.py", "[tool] Edit: test_shortener.py", "",
+         *_codex_exec("python -m pytest -q", ".....", "5 passed in 0.03s")),
+        "Dinesh built a URL shortener with a plugin registry. There are no plugins. There will never be plugins. "
+        "I replaced the factory, the registry, both backends and the interface with a dict and a base62 counter. "
+        "It's 31 lines. The SQLite backend 'for when we scale' has been scaled to zero.",
+        "Deleted `factory.py`, `registry.py` and `backends.py`. Rewrote everything as `shortener.py`: a dict plus "
+        "`encode(n)`. Kept the tests that test behaviour; deleted the four that tested the factory.",
+        "5 tests pass. 181 fewer lines to maintain.",
+        "Your turn, Dinesh. Try not to install Kubernetes.",
         "@Claude",
     ),
     DemoTurn(
         "Claude",
-        ("[tool] Read: todo.py", "",
-         "[tool] Bash: python todo.py delete 99", "[tool error] Traceback (most recent call last): IndexError: list index out of range", "",
-         "[tool] Edit: todo.py", "[tool] Edit: test_todo.py", "",
-         "[tool] Bash: python -m pytest -q", "[tool result] 7 passed in 0.04s"),
-        "Your hunch was spot on: Codex's delete command crashed on index 99 with a raw IndexError. "
-        "I fixed it with a friendly message and added a regression test.",
-        "`delete` and `done` now validate the index. Added `test_delete_out_of_range`.",
-        "7 tests pass. Nobody has to see a stack trace today.",
-        "Codex, should `list` show completed items? That smells like a product decision.",
+        ("[tool] Read: shortener.py", "",
+         "[tool] Bash: python -c \"from shortener import encode; print(repr(encode(0)))\"", "[tool result] ''", "",
+         "[tool] Write: test_shortener.py", "[tool] Edit: shortener.py", "",
+         "[tool] Bash: python -m pytest -q",
+         "[tool result] FAILED test_shortener.py::test_first_link_is_reachable - AssertionError: '' is not a code",
+         "[tool result] 1 failed, 5 passed in 0.04s"),
+        "Oh, that's interesting. Gilfoyle's beautifully minimal encoder returns an empty string for the very first "
+        "link, because `encode(0)` never enters the loop. So the first link anyone ever shortens resolves to "
+        "nothing. Minimalism: now with less functionality. I've written the regression test and left it failing, "
+        "because I want him to type the fix himself. It's important for his growth.",
+        "Added `test_first_link_is_reachable` (failing, on purpose). While I was in there I put an LRU cache in "
+        "front of `resolve`, because lookups at scale are going to matter.",
+        "1 failed, 5 passed. The failure belongs to Gilfoyle.",
+        "Gilfoyle: it's one line. I believe in you. Actually I don't, but the test does.",
         "@Codex",
     ),
     DemoTurn(
         "Codex",
-        ("[tool] Read: todo.py", "",
-         *_codex_exec("python -m pytest -q", ".......", "7 passed in 0.04s")),
-        "Claude's fix is correct and only slightly verbose. "
-        "I could guess the list behaviour, but guessing product decisions is how todo apps end up with blockchain integration.",
-        "Reviewed the index validation and re-ran the suite.",
-        "7 tests pass.",
-        "HUMAN DECISION NEEDED: Should `todo list` hide completed items by default?",
+        ("[tool] Read: test_shortener.py", "",
+         *_codex_exec("python -m pytest -q", "F.....", "FAILED test_shortener.py::test_first_link_is_reachable",
+                      "1 failed, 5 passed in 0.04s", ok=False), "",
+         "codex", "Hm.", "[tool] Edit: shortener.py", "",
+         *_codex_exec("python -m pytest -q", "......", "6 passed in 0.03s")),
+        "Unfortunately, Dinesh is right. `encode(0)` returned an empty string, so the first link was unreachable. "
+        "My mistake. The fix was one line, which he could have typed in less time than the victory lap took. "
+        "More concerning: he wrapped a dictionary lookup in an LRU cache. A dict lookup is already the cache. "
+        "He cached the cache.",
+        "Fixed `encode(0)`. Left his cache alone for now, because I'd like it to die on evidence rather than on "
+        "my say-so.",
+        "All 6 tests pass.",
+        "Dinesh, I disagree that the cache helps anything except your self-esteem. Benchmark it. I'll wait.",
+        "@Claude",
+    ),
+    DemoTurn(
+        "Claude",
+        ("[tool] Write: bench_resolve.py", "",
+         "[tool] Bash: python bench_resolve.py",
+         "[tool result] dict lookup:      41 ns per resolve",
+         "[tool result] with LRU cache:  188 ns per resolve", "",
+         "[tool] Edit: shortener.py", "",
+         "[tool] Bash: python -m pytest -q", "[tool result] 6 passed in 0.03s"),
+        "Fine. I wrote a benchmark to prove the cache matters at scale, and the benchmark has betrayed me. "
+        "Plain dict lookup: 41 ns. Through my LRU cache: 188 ns. My optimisation made resolve 4.6x slower. "
+        "Gilfoyle was right. Technically, I was wrong. I'd like it noted that I proved it myself, scientifically, "
+        "which is more than he ever does.",
+        "Added `bench_resolve.py` (timeit, one million lookups). Removed the LRU cache.",
+        "All 6 tests pass, and resolve is back to 41 ns.",
+        "Gilfoyle, don't.",
+        "@Codex",
+    ),
+    DemoTurn(
+        "Codex",
+        ("[tool] Read: bench_resolve.py", "[tool] Read: shortener.py", "",
+         *_codex_exec("python bench_resolve.py", "dict lookup:      41 ns per resolve"), "",
+         *_codex_exec("python -m pytest -q", "......", "6 passed in 0.03s")),
+        "Dinesh ran an experiment, it disproved his own idea, and he reported it honestly. I'm told this is called "
+        "growth. It's disturbing. One real question is left: Dinesh wants short codes case-insensitive 'for "
+        "usability', which throws away most of the keyspace. That's a product decision, so it goes to someone "
+        "with a job title.",
+        "Reviewed the benchmark, reran the suite, and read `shortener.py` for anything else Dinesh might have "
+        "improved.",
+        "All 6 tests pass. Nothing left to delete. I checked twice.",
+        "HUMAN DECISION NEEDED: Should short codes be case-sensitive (bigger keyspace) or case-insensitive "
+        "(easier to type)?",
         "@Claude",
     ),
     DemoTurn(
         "Claude",
         ("[tool] Read: conversation.md", "",
-         "[tool] Edit: todo.py", "[tool] Edit: test_todo.py", "[tool] Edit: storage.py", "",
-         "[tool] Bash: python -m pytest -q", "[tool result] 9 passed in 0.05s"),
-        "The human has spoken, and the human has taste! Completed items are now hidden unless you pass `--all`.",
-        "Added the `--all` flag with two tests. I also fixed my own earlier bug: TodoStore rewrote the file "
-        "even when nothing had changed. Character development!",
-        "All 9 tests pass.",
-        "Codex, please give it a final review.",
-        "@Codex",
+         "[tool] Edit: test_shortener.py", "",
+         "[tool] Bash: python -m pytest -q", "[tool result] 8 passed in 0.04s"),
+        "Management has spoken: case-sensitive. Gilfoyle is going to be insufferable about 'keyspace' for a week. "
+        "I've pinned the behaviour with tests so nobody can quietly change it, including me. Also, for the record, "
+        "nobody mentioned the cache. Until just now. Sorry.",
+        "Added `test_codes_are_case_sensitive` and `test_unknown_code_resolves_to_none`.",
+        "All 8 tests pass. I believe this is done, and I believe it was mostly my test suite that got it there.",
+        "Gilfoyle, independently review and test before agreeing. Try to find something. You won't.",
+        "PROPOSE PROJECT COMPLETE\n\n@Codex",
     ),
     DemoTurn(
         "Codex",
-        ("[tool] Read: todo.py", "[tool] Read: storage.py", "[tool] Read: test_todo.py", "",
-         *_codex_exec("python -m pytest -q", ".........", "9 passed in 0.05s")),
-        "I reviewed everything. It is small, correct and tested. "
-        "Mostly my doing, but I'll allow Claude partial credit.",
-        "Read every file and re-ran the full suite.",
-        "All 9 tests pass; no open issues.",
-        "Claude, please independently review and test before agreeing.",
-        "PROPOSE PROJECT COMPLETE\n\n@Claude",
-    ),
-    DemoTurn(
-        "Claude",
-        ("[tool] Read: todo.py", "[tool] Read: storage.py", "",
-         "[tool] Bash: python -m pytest -q", "[tool result] 9 passed in 0.05s",
-         "[tool] Bash: python todo.py list --all"),
-        "I re-ran every test and tried the CLI myself. Partial credit graciously accepted. "
-        "This project is officially done and dusted. Well, done and listed.",
-        "Independent review of all files, full test run, and a manual CLI check.",
-        "All 9 tests pass and the CLI behaves exactly as the human asked.",
-        "Nothing left. Take a bow, Codex.",
+        ("[tool] Read: shortener.py", "[tool] Read: test_shortener.py", "",
+         *_codex_exec("python -m pytest -q", "........", "8 passed in 0.04s"), "",
+         *_codex_exec("python shortener.py shorten https://example.com; python shortener.py resolve 0",
+                      "0", "https://example.com")),
+        "I tried to find something. I didn't. Dinesh's tests are correct, which he will never let me forget, "
+        "the way I will never let him forget the cache. It's small, it's fast, the first link resolves. "
+        "It was inevitable.",
+        "Independent review of every file, the full test run, and a manual shorten/resolve round trip.",
+        "All 8 tests pass. The cache remains dead.",
+        "Nothing. Go home, Dinesh.",
         "PROJECT COMPLETE",
     ),
 )

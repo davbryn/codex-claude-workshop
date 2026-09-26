@@ -64,7 +64,7 @@ When finished, append exactly this structure to the END of conversation.md
 
 **Thoughts**
 
-(your reaction to the current state and to {other}'s last turn, in character)
+(react directly to something specific in {other}'s last turn, in character)
 
 **Actions**
 
@@ -99,11 +99,15 @@ def build_prompt(
     project_dir: Path,
     protocol_file: str,
     turn: int,
+    theatre: str = "",
 ) -> str:
+    """``theatre`` is the optional character-direction layer (see workshop/theatre/cast.py)."""
     personality = personality.strip() or "(no particular personality — be a thoughtful, professional collaborator)"
+    theatre = f"{theatre.strip()}\n\n" if theatre.strip() else ""
     return (
         f"{CORE_RULES}\n"
         f"You are {me}. Your collaborator is {other}.\n\n"
+        f"{theatre}"
         f"[{me.upper()} PERSONALITY]\n{personality}\n\n"
         + TURN_INSTRUCTION.format(
             project_dir=project_dir, protocol_file=protocol_file, me=me, other=other, turn=turn

@@ -25,11 +25,16 @@ def _rx(*phrases: str) -> re.Pattern:
     return re.compile(r"\b(?:" + "|".join(phrases) + r")\b", re.I)
 
 
+NAMES = {"Codex": r"(?:codex|gilfoyle)", "Claude": r"(?:claude|dinesh)"}
+ANY_NAME = r"(?:codex|claude|gilfoyle|dinesh)"
+
 DISAGREE_RX = _rx(
-    r"i (?:strongly |respectfully |completely )?disagree",
+    r"i (?:strongly |respectfully |completely |fundamentally )?disagree",
     r"i don'?t agree",
     r"i do not agree",
-    r"(?:codex|claude) (?:is|was) wrong",
+    ANY_NAME + r" (?:is|was) (?:wrong|mistaken)",
+    r"you'?re wrong",
+    r"that'?s (?:just )?wrong",
     r"unnecessary(?: abstraction)?",
     r"over-?engineer(?:ed|ing)",
     r"over engineered",
@@ -40,6 +45,8 @@ DISAGREE_RX = _rx(
     r"i object",
     r"strongly prefer",
     r"crime against",
+    r"(?:is|are|was) pointless",
+    r"absolutely not",
 )
 SELF_ADMIT_RX = _rx(
     r"i was wrong",
@@ -50,10 +57,13 @@ SELF_ADMIT_RX = _rx(
     r"i stand corrected",
     r"mea culpa",
     r"i broke",
+    r"i (?:was|am) (?:the one )?(?:wrong|mistaken)",
 )
 CONCEDE_RX = re.compile(
-    r"\b(?:(?:codex|claude) (?:was|is) right|you'?re right|you were right|good catch|fair point|"
-    r"nice catch|i concede|(?:codex|claude)'?s (?:version|approach|solution) is (?:better|cleaner))\b",
+    r"\b(?:" + ANY_NAME + r" (?:was|is) (?:right|correct)|you'?re right|you were right|good catch|fair point|"
+    r"nice catch|i concede|(?:he|she|they) (?:was|is|were|are) (?:right|correct)|"
+    + ANY_NAME + r" (?:found|caught|spotted) (?:a|an|the|my) (?:actual |real |genuine )?(?:bug|mistake|problem|race)|"
+    + ANY_NAME + r"'?s (?:version|approach|solution) is (?:better|cleaner|faster))\b",
     re.I,
 )
 FIX_RX = _rx(r"fixed", r"fixes", r"resolved", r"repaired", r"corrected")
@@ -74,6 +84,37 @@ TEST_COUNT_RX = re.compile(r"\b(\d+) (?:tests? )?(?:passed|pass|passing)\b|\ball
 FAIL_RX = re.compile(r"\b(?:tests? (?:still )?fail(?:ed|s|ing)?|\d+ failed|failing tests?|FAILED)\b", re.I)
 CONFUSED_RX = _rx(r"confus(?:ed|ing)", r"unclear", r"not sure", r"puzzl(?:ed|ing)", r"mystery", r"no idea", r"baffl(?:ed|ing)")
 REVIEW_RX = _rx(r"review(?:ed|ing)?", r"inspect(?:ed|ing)?", r"verif(?:y|ied|ying)", r"double-check(?:ed)?", r"audit(?:ed)?")
+FOUND_BUG_RX = _rx(
+    r"found (?:a|an|the|another) (?:real |actual |genuine |nasty |subtle )?(?:bug|race condition|edge case|crash|"
+    r"regression|off-by-one|problem)",
+    r"(?:crashes|crashed|breaks|broke|fails) (?:on|when|with|immediately)",
+    r"returns an empty",
+)
+SMUG_RX = _rx(
+    r"as (?:i )?predicted", r"told you", r"i was right", r"as expected", r"predictably", r"inevitabl[ey]",
+    r"obviously", r"you'?re welcome", r"as usual", r"shocking(?:ly)?", r"surprising no one",
+)
+JAB_RX = _rx(
+    r"try not to", r"somehow", r"apparently", r"again", r"ego", r"kubernetes", r"factory", r"enterprise",
+    r"over-?engineer\w*", r"verbose", r"nobody", r"delet\w+", r"unfortunately", r"adorable", r"cute", r"brave",
+    r"personality", r"obviously", r"of course", r"hysterical", r"feelings", r"cry", r"funeral", r"satan\w*",
+    r"nihilis\w+", r"lines? of code", r"wrong", r"pointless", r"unbearable", r"insufferable",
+)
+SAME_RX = _rx(
+    r"same (?:fix|approach|solution|conclusion|idea|answer|design)",
+    r"independently (?:arrived|reached|came|landed|wrote|found)",
+    r"uncomfortabl[ey] (?:agree\w*|similar)",
+    r"disturbing(?:ly)? (?:similar|agree\w*)",
+)
+REGRESSION_FIX_RX = _rx(
+    r"regression (?:from|introduced by|caused by) (?:my|the|his|your) (?:previous |earlier |last )?fix",
+    r"(?:previous|earlier|last|my|your|his) fix (?:broke|caused|introduced|reintroduced)",
+    r"fix(?:ing)? (?:the )?fix",
+)
+EVIDENCE_RX = _rx(
+    r"benchmark\w*", r"measured", r"profil\w+", r"timeit", r"ns per", r"ms per", r"\d+(?:\.\d+)?x (?:faster|slower)",
+    r"tests? (?:prove|proves|proved|show|shows|showed)", r"the numbers",
+)
 
 
 @dataclass
@@ -84,12 +125,18 @@ class EntryReaction:
     concedes_other: bool = False
     fixed_other_bug: bool = False
     fixed_own_mistake: bool = False
+    caught_other_bug: bool = False
     success: bool = False
     strong_success: bool = False
     tests_failed: bool = False
     confused: bool = False
     reviewing: bool = False
     mentions_other: bool = False
+    jab: bool = False
+    smug: bool = False
+    same_solution: bool = False
+    regression_from_fix: bool = False
+    evidence: bool = False
     proposes_completion: bool = False
     declares_complete: bool = False
     human_needed: bool = False
@@ -99,12 +146,43 @@ class EntryReaction:
     def admits_mistake(self) -> bool:
         return self.self_admission or self.concedes_other
 
+    @property
+    def both_wrong(self) -> bool:
+        """The speaker admits a mistake *and* catches one of the other's in the same entry."""
+        return self.self_admission and self.caught_other_bug
+
+    @property
+    def other(self) -> str:
+        return "Claude" if self.speaker == "Codex" else "Codex"
+
+    def moment(self) -> str | None:
+        """The single special moment (if any) this entry deserves. Most entries get none."""
+        if self.declares_complete or self.human_needed:
+            return None
+        if self.both_wrong:
+            return "both_wrong"
+        if self.regression_from_fix:
+            return "character_development"
+        if self.caught_other_bug and not self.self_admission:
+            return "dinesh_catches" if self.speaker == "Claude" else "gilfoyle_catches"
+        if self.same_solution:
+            return "same_solution"
+        if self.concedes_other:
+            return "own_goal" if self.evidence and self.self_admission and not self.disagreement else "concession"
+        if self.fixed_own_mistake:
+            return "character_development"
+        if self.disagreement:
+            return "disagreement"
+        return None
+
     def primary_state(self) -> str:
         """The speaker's theatrical reaction after speaking."""
         if self.declares_complete:
             return "celebrating"
         if self.human_needed:
             return "waiting"
+        if self.caught_other_bug and not self.self_admission:
+            return "gloating" if self.speaker == "Claude" else "smug"
         if self.fixed_own_mistake:
             return "pleased"
         if self.admits_mistake:
@@ -113,6 +191,8 @@ class EntryReaction:
             return "disagreeing"
         if self.tests_failed and not self.success:
             return "confused"
+        if self.smug:
+            return "smug"
         if self.strong_success or self.proposes_completion:
             return "celebrating"
         if self.success:
@@ -127,10 +207,14 @@ class EntryReaction:
             return "celebrating"
         if self.concedes_other:
             return "smug" if rivalry else "pleased"
-        if self.fixed_other_bug:
-            return "embarrassed"
+        if self.caught_other_bug or self.fixed_other_bug:
+            if not rivalry:
+                return "embarrassed"
+            return "sideeye" if self.other == "Codex" else "outraged"
         if self.disagreement:
             return "annoyed" if rivalry else "confused"
+        if self.jab and rivalry:
+            return "sideeye" if self.other == "Codex" else "glare"
         return None
 
 
@@ -138,18 +222,24 @@ def classify_entry(turn: ConversationTurn, other: str | None = None) -> EntryRea
     content = turn.content
     prose = strip_code(content)
     other = other or ("Claude" if turn.speaker == "Codex" else "Codex")
+    other_rx = NAMES.get(other, re.escape(other))
     r = EntryReaction(speaker=turn.speaker)
     r.proposes_completion = has_marker(content, PROPOSE_COMPLETE_MARKER)
     r.declares_complete = has_marker(content, COMPLETE_MARKER)
     r.human_needed = HUMAN_DECISION_MARKER.lower() in content.lower()
     r.disagreement = bool(DISAGREE_RX.search(prose))
-    r.self_admission = bool(SELF_ADMIT_RX.search(prose))
     r.concedes_other = bool(CONCEDE_RX.search(prose)) and turn.speaker != "Human"
+    r.self_admission = bool(SELF_ADMIT_RX.search(prose))
     r.success = bool(SUCCESS_RX.search(prose))
     r.tests_failed = bool(FAIL_RX.search(prose)) and not re.search(r"\b0 failed\b", prose)
     r.confused = bool(CONFUSED_RX.search(prose))
     r.reviewing = bool(REVIEW_RX.search(prose))
-    r.mentions_other = bool(re.search(rf"\b{other}\b", prose, re.I))
+    r.mentions_other = bool(re.search(rf"\b{other_rx}\b", prose, re.I))
+    r.smug = bool(SMUG_RX.search(prose))
+    r.jab = r.mentions_other and bool(JAB_RX.search(prose))
+    r.same_solution = bool(SAME_RX.search(prose))
+    r.regression_from_fix = bool(REGRESSION_FIX_RX.search(prose))
+    r.evidence = bool(EVIDENCE_RX.search(prose))
     strong = STRONG_SUCCESS_RX.search(prose)
     r.strong_success = bool(strong)
     counts = [int(g) for m in TEST_COUNT_RX.finditer(prose) for g in m.groups() if g]
@@ -158,13 +248,20 @@ def classify_entry(turn: ConversationTurn, other: str | None = None) -> EntryRea
     fixed = bool(FIX_RX.search(prose))
     own_bug = re.search(r"\bmy (?:own )?(?:earlier |previous |original )?(?:bug|mistake|error|regression)", prose, re.I)
     others_bug = re.search(
-        rf"\b{other}'?s (?:\w+ ){{0,3}}(?:bug|mistake|crash|regression|typo|error)|"
-        rf"\bbug (?:in|from) {other}'?s\b|\b{other}'?s (?:\w+ ){{0,3}}(?:crashes|crashed|breaks|broke)\b",
+        rf"\b{other_rx}'?s (?:[\w-]+ ){{0,4}}(?:bug|mistake|crash|regression|typo|error|race condition|edge case)|"
+        rf"\bbug (?:in|from) {other_rx}'?s\b|"
+        rf"\b{other_rx}'?s (?:[\w-]+ ){{0,4}}(?:crashes|crashed|breaks|broke|fails|failed|returns an empty)\b",
         prose,
         re.I,
     )
+    # "Dinesh found an actual bug" is the speaker conceding, not the speaker catching one.
+    other_found_mine = re.search(rf"\b{other_rx} (?:found|caught|spotted)\b", prose, re.I)
+    r.caught_other_bug = not other_found_mine and (bool(others_bug) or (
+        bool(FOUND_BUG_RX.search(prose)) and r.mentions_other and not r.concedes_other and not r.self_admission))
+    if r.concedes_other and other_found_mine:
+        r.self_admission = True
     r.fixed_own_mistake = fixed and bool(own_bug)
-    r.fixed_other_bug = fixed and bool(others_bug) and not r.fixed_own_mistake
+    r.fixed_other_bug = fixed and r.caught_other_bug and not r.fixed_own_mistake
     return r
 
 

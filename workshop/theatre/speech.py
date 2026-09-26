@@ -11,7 +11,9 @@ import os
 
 from PySide6.QtCore import QObject, Signal
 
-AGENT_PITCH = {"Codex": -0.12, "Claude": 0.12}
+# Gilfoyle lower and flatter/slower; Dinesh higher and quicker.
+AGENT_PITCH = {"Codex": -0.3, "Claude": 0.12}
+AGENT_RATE = {"Codex": -0.12, "Claude": 0.12}
 PREFERRED_ENGINES = ("winrt", "sapi", "flite", "speechd", "darwin", "macos", "android")
 
 
@@ -109,7 +111,8 @@ class QtSpeechEngine(SpeechEngine):
         male = [n for n in names if self._voices[n].gender().name == "Male"]
         female = [n for n in names if self._voices[n].gender().name == "Female"]
         codex = (male or names)[0]
-        claude = next((n for n in (female + names) if n != codex), codex)
+        # Dinesh: a second male voice if there is one (contrast comes from pitch/rate), else anything else
+        claude = next((n for n in (male[1:] + female + names) if n != codex), codex)
         return {"Codex": codex, "Claude": claude}
 
     def set_voice(self, agent: str, voice: str) -> None:
@@ -120,6 +123,7 @@ class QtSpeechEngine(SpeechEngine):
         return self._agent_voice.get(agent) or self.default_voices().get(agent, "")
 
     def set_rate(self, rate: float) -> None:
+        self._rate = rate
         self.tts.setRate(max(-1.0, min(1.0, rate)))
 
     def set_volume(self, volume: float) -> None:
@@ -137,6 +141,7 @@ class QtSpeechEngine(SpeechEngine):
         if voice is not None:
             self.tts.setVoice(voice)
         self.tts.setPitch(AGENT_PITCH.get(agent, 0.0))
+        self.tts.setRate(max(-1.0, min(1.0, getattr(self, "_rate", 0.0) + AGENT_RATE.get(agent, 0.0))))
         self._current = agent
         self.tts.say(text)
         return True

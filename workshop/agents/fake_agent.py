@@ -38,16 +38,16 @@ from workshop.conversation import (  # noqa: E402
 
 LINES = {
     "Codex": [
-        "Claude hasn't had the chance to ruin anything yet, so I suppose I'll begin.",
-        "I inspected Claude's changes. They work. I'm as surprised as you are.",
-        "Minimal, elegant, correct. Pick three.",
-        "I have reviewed the code and found nothing to remove. A first.",
+        "Dinesh hasn't had the chance to ruin anything yet, so I suppose I'll begin.",
+        "I inspected Dinesh's changes. They work. I'm as disturbed as you are.",
+        "Minimal, correct, tested. Dinesh will find a way to add a factory to it.",
+        "I reviewed the code and found nothing to delete. I'll be checking again.",
     ],
     "Claude": [
-        "Oh, this is a *lovely* start! Although I think the abstraction is unnecessary here.",
-        "Codex was right about the parser — I've kept its version and added a regression test.",
-        "I'm not saying this is over-engineered, but it has a load-bearing wrapper class.",
-        "Everything checks out. I'd say this is… byte-sized perfection.",
+        "Okay. Gilfoyle's version works, but I think the abstraction is unnecessary here, and I say that as a fan of abstraction.",
+        "Gilfoyle was right about the parser. I've kept his version and added a regression test, which he forgot.",
+        "I'm not saying this is over-engineered, Gilfoyle, but you deleted the part that made it work.",
+        "Everything checks out. I found zero bugs in Gilfoyle's code, which honestly feels like a bug.",
     ],
 }
 

@@ -90,32 +90,83 @@ def _conversational(text: str, count: int) -> list[str]:
     return [s for s in sentences(text) if not _looks_technical(s)][:count]
 
 
+# --- choosing the line worth showing -------------------------------------------
+
+_KEYWORDS = re.compile(
+    r"\b(?:you|your|you're|wrong|right|bug|actually|unfortunately|obviously|somehow|apparently|again|"
+    r"of course|told you|welcome|concede|admit|correct|incorrect|nobody|never|interesting|weird|"
+    r"ego|feelings|cry|kubernetes|factory|abstraction|minimal\w*|over-?engineer\w*|delet\w+|crash\w*|"
+    r"slower|faster|race condition|edge case|benchmark\w*|lines)\b", re.I)
+_NAMES = re.compile(r"\b(?:gilfoyle|dinesh|codex|claude)\b", re.I)
+_BOILERPLATE = re.compile(
+    r"^(?:i )?(?:read|ran|re-ran|reviewed|created|added|updated|inspected|checked|opened|looked at|implemented|"
+    r"wrote|edited|modified|verified|here(?:'s| is))\b|^(?:all )?\d+ tests? pass", re.I)
+_SECTION_WEIGHT = {"thoughts": 2.0, "_intro": 1.0, "result": 0.4, "next": 0.0, "actions": -1.0}
+
+
+def score_sentence(sentence: str, section: str = "thoughts") -> float:
+    """How entertaining/relevant a public sentence is for the speech bubble (deterministic)."""
+    if _looks_technical(sentence):
+        return -10.0
+    score = _SECTION_WEIGHT.get(section, 0.0)
+    score += 3.0 * min(2, len(_NAMES.findall(sentence)))
+    score += 1.5 * min(3, len(_KEYWORDS.findall(sentence)))
+    if sentence.rstrip().endswith(("!", "?")):
+        score += 0.5
+    if _BOILERPLATE.search(sentence):
+        score -= 2.5
+    if len(sentence) < 18:
+        score -= 1.0
+    elif len(sentence) > 200:
+        score -= 1.5
+    return score
+
+
+def _candidates(content: str) -> list[tuple[str, int, str]]:
+    """(section, index-in-section, sentence) for every conversational sentence, in order."""
+    out = []
+    for key, text in sections(content).items():
+        for i, sentence in enumerate(sentences(text)):
+            out.append((key, i, sentence))
+    return out
+
+
+def _best_passage(content: str, limit: int) -> tuple[str, set[str]]:
+    cands = [c for c in _candidates(content) if not _looks_technical(c[2])]
+    if not cands:
+        return "", set()
+    scored = [(score_sentence(s, key), -n, key, i, s) for n, (key, i, s) in enumerate(cands)]
+    best = max(scored)
+    _, _, key, i, sentence = best
+    same = [s for k, j, s in cands if k == key]
+    chosen = [sentence]
+    # keep a short setup before the line, and the punchline after it, when they fit
+    if i > 0 and len(sentence) < 70 and len(same[i - 1]) < 90 and score_sentence(same[i - 1], key) > 0:
+        chosen.insert(0, same[i - 1])
+    if i + 1 < len(same) and len(" ".join(chosen + [same[i + 1]])) <= limit:
+        chosen.append(same[i + 1])
+    return _take(chosen, limit), set(chosen)
+
+
 def bubble_excerpt(content: str, limit: int = 240) -> str:
-    """A short, conversational excerpt for a speech bubble (emoji kept)."""
-    parts = sections(content)
-    chosen = _conversational(parts.get("thoughts", ""), 2)
-    if len(" ".join(chosen)) < 110:
-        chosen += _conversational(parts.get("result", ""), 1)
-    if not chosen:
-        for key in ("_intro", "result", "next", "actions"):
-            chosen = _conversational(parts.get(key, ""), 2)
-            if chosen:
-                break
-    if not chosen:
-        chosen = sentences(content)[:2]
-    return _take(chosen, limit)
+    """The most entertaining real excerpt of an entry for a speech bubble (emoji kept, never rewritten)."""
+    text, _ = _best_passage(content, limit)
+    if text:
+        return text
+    return _take(sentences(content)[:2], limit)
 
 
 def speech_text(content: str, limit: int = 300) -> str:
-    """Text to read aloud: Thoughts, one Result sentence, one Next sentence. No code, paths or emoji."""
-    parts = sections(content)
-    picked = _conversational(parts.get("thoughts", ""), 2)
-    picked = [_take(picked, 180)] if picked else []
-    picked += _conversational(parts.get("result", ""), 1)
-    picked += _conversational(parts.get("next", ""), 1)
-    if not any(picked):
-        picked = _conversational(content, 3)
-    text = _take([p for p in picked if p], limit)
+    """What the character says aloud: the bubble passage, plus the best remaining line if it fits."""
+    text, used = _best_passage(content, min(limit, 220))
+    if not text:
+        return clean_for_speech(_take(_conversational(content, 3), limit))
+    rest = [(score_sentence(s, k), s) for k, _, s in _candidates(content) if s not in used]
+    rest = [r for r in rest if r[0] > 0]
+    if rest:
+        extra = max(rest)[1]
+        if len(text) + 1 + len(extra) <= limit:
+            text = f"{text} {extra}"
     return clean_for_speech(text)
 
 
