@@ -76,3 +76,26 @@ def log_spins(capture, spins: list[challenge.Spin], reactions: dict) -> None:
             line = reactions.get(agent, {}).get(i)
             if line:
                 capture.log.add("spin_reaction", index=i, agent=agent, line=line)
+
+
+def react_later(project_dir: Path, adapters: dict, progress=print) -> int:
+    """Ask the cast to react to spins that were logged without reactions. Returns how many lines were added."""
+    from .episode.capture import EPISODE_DIR, EventLog, read_events
+
+    path = Path(project_dir) / EPISODE_DIR / "events.jsonl"
+    events = read_events(path)
+    logged = [e for e in events if e["kind"] == "spin"]
+    have = {(e["index"], e["agent"]) for e in events if e["kind"] == "spin_reaction"}
+    if not logged or len(have) >= 2 * len(logged):
+        return 0
+    spins = [challenge.Spin(e["wheel"], e.get("who"), [challenge.Slice(**s) for s in e["slices"]], e["result"],
+                            e.get("near_misses", [])) for e in logged]
+    reactions = spin_reactions(spins, adapters, progress=progress)
+    log = EventLog(path)
+    added = 0
+    for agent, lines in reactions.items():
+        for i, line in sorted(lines.items()):
+            if (logged[i]["index"], agent) not in have:
+                log.add("spin_reaction", index=logged[i]["index"], agent=agent, line=line)
+                added += 1
+    return added

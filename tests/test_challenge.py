@@ -82,3 +82,50 @@ def test_reaction_prompt_lists_every_spin():
     text = c.reaction_prompt("Codex", spins)
     assert "skill level for Dinesh" in text and "the language" in text and "the project" in text
     assert text.count("\n1. ") == 1 and "5. " in text
+
+
+def _challenge_events(tmp_path):
+    from workshop.episode.capture import EventLog, read_events
+
+    log = EventLog(tmp_path / "events.jsonl")
+    spins = c.spin_all(random.Random(3), project=True)
+    log.add("human", title="Project Start", content=c.brief("", spins))
+    for i, s in enumerate(spins):
+        log.add("spin", index=i, **s.as_event())
+    log.add("spin_reaction", index=0, agent="Claude", line="Oh no.")
+    log.add("spin_reaction", index=0, agent="Codex", line="Good.")
+    log.add("turn_start", agent="Claude", turn=1)
+    log.add("diff", agent="Claude", path="game.py", created=True, deleted=False, lines=[["add", "x = 1"]])
+    log.add("entry", agent="Claude", title="Claude - Turn 1", content=(
+        "There are no loops, because recursion is a workaround the wheel can't stop. It works.\n\n@Codex"),
+        moment=None, handoff="Codex")
+    log.add("turn_end", agent="Claude", exit_code=0, seconds=10)
+    log.add("rules_check", agent="Claude", count=2, violations=[{"rule": "no_loops", "path": "game.py", "line": 3,
+                                                                "text": "for x in y:"}])
+    log.add("turn_start", agent="Codex", turn=1)
+    log.add("entry", agent="Codex", title="Codex - Turn 1", content="Fixed his loops. You're welcome.\n\n@Claude",
+            moment=None, handoff="Claude")
+    log.add("turn_end", agent="Codex", exit_code=0, seconds=10)
+    log.add("rules_check", agent="Codex", count=0, violations=[])
+    log.add("complete")
+    return read_events(tmp_path / "events.jsonl")
+
+
+def test_challenge_plan_tells_the_story(tmp_path):
+    from workshop.episode.challenge_plan import plan_challenge
+
+    (tmp_path / "DEMO.md").write_text("```\n> python game.py\nYou win!\n```\n", encoding="utf-8")
+    plan = plan_challenge(_challenge_events(tmp_path), tmp_path)
+    kinds = [s["kind"] for s in plan["scenes"]]
+    assert kinds[0] == "challenge_title" and kinds.count("wheel") == 5 and "rules" in kinds
+    assert kinds[-2:] == ["demo", "finale"]
+    wheel = plan["scenes"][1]
+    assert [r["speaker"] for r in wheel["reactions"]] == ["Claude", "Codex"]  # Dinesh panics, Gilfoyle buttons
+    violation = next(s for s in plan["scenes"] if s["kind"] == "violation")
+    assert violation["agent"] == "Claude" and violation["new"] == 2
+    cleared = next(s for s in plan["scenes"] if s["kind"] == "cleared")
+    assert cleared["agent"] == "Codex" and cleared["fixed"] == 2
+    trick = next(s for s in plan["scenes"] if s["kind"] == "confessional")
+    assert "recursion is a workaround" in trick["text"]
+    assert any("CLEAN" in line for line in plan["scenes"][-1]["lines"])
+    assert plan["format"] == "challenge" and "Wheel of Destiny" in plan["logline"]

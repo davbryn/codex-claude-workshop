@@ -28,6 +28,7 @@ from ..theatre.text import clean_for_speech
 from ..ui.recorder import find_ffmpeg
 from .capture import other_of
 from .overlays import exhibit_lines, paint_exhibit, paint_subtitle
+from .wheel_paint import paint_big_card, paint_hud, paint_violation, paint_wheel, wheel_angle, wheel_title
 from .voice import Voices
 
 MOMENT_SFX = {"dinesh_catches": "yes", "gilfoyle_catches": "blast", "concession": "wahwah", "own_goal": "wahwah",
@@ -59,6 +60,7 @@ class EpisodeRenderer:
         self.overlay = None  # callable(painter, t) drawn over the stage (title cards, lower thirds)
         self.cam: tuple | None = None  # (agent, zoom, since, push): a close-up on his face; None = the room
         self.subtitle: tuple[str, str] | None = None  # (agent, text) shown on close-ups
+        self.hud: dict | None = None  # the challenge status bar, once the rules are in
         self._speech = None  # (agent, start, duration, envelope, text_len)
         self._typing_until = 0.0
         self._next_key = 0.0
@@ -134,12 +136,17 @@ class EpisodeRenderer:
             p.translate(w / 2, h * 0.36)
             p.scale(zoom, zoom)
             p.translate(-head.x(), -head.y())
+        if self.cam is not None:  # a face close-up: no room nameplates bleeding in at the edges
+            self.stage._paint_nameplate = lambda *a: None
         self.stage.render(p, QPoint(0, 0))
+        self.stage.__dict__.pop("_paint_nameplate", None)
         p.resetTransform()
         for b, kind in saved:
             b.kind = kind
         if self.subtitle is not None and self.cam is not None:
             paint_subtitle(p, self.size, *self.subtitle)
+        if self.hud is not None:
+            paint_hud(p, self.size, self.hud)
         if self.overlay is not None:
             self.overlay(p, self.t)
         p.end()
@@ -557,6 +564,165 @@ class EpisodeRenderer:
         else:
             self.advance(2.0)
         self.stage.set_caption(None, "")
+        self._cut(None)
+
+    # -- the Wheel of Destiny -------------------------------------------------------------------
+
+    def _scene_challenge_title(self, scene: dict) -> None:
+        start = self.t
+        self.overlay = lambda p, t: paint_big_card(
+            p, self.size, t - start, "GILFOYLE vs DINESH", [("", "Two AI agents. No humans."),
+                                                           ("", "The Wheel of Destiny decides everything.")],
+            footer=self.plan.get("disclaimer", ""))
+        self.sfx("fanfare", 0.8)
+        self.advance(4.2)
+        self.overlay = None
+
+    def _scene_wheel(self, scene: dict) -> None:
+        spin = self.events.get(scene["spin"])
+        if not spin:
+            return
+        n = sum(1 for e in self.all_events if e["kind"] == "spin" and e["id"] <= spin["id"])
+        title = wheel_title(spin, n)
+        duration = 4.6
+        start = self.t
+        state = {"under": None}
+
+        def overlay(p, t):
+            age = t - start
+            angle, under = wheel_angle(spin, age, duration)
+            paint_wheel(p, self.size, spin, angle, (age - duration) if age >= duration else None, title)
+
+        self.overlay = overlay
+        self.sfx("whir", 0.6)
+        frames = int(round((duration + 0.1) * self.fps))
+        for _ in range(frames):
+            _, under = wheel_angle(spin, self.t - start + 1.0 / self.fps, duration)
+            if under != state["under"]:
+                state["under"] = under
+                self.sfx("tick", 0.45)
+            self.advance(1.0 / self.fps)
+        result = spin["slices"][spin["result"]]
+        self.sfx("blast" if spin["wheel"] in ("language", "limit") else "chime", 0.8)
+        self.advance(2.6 + min(2.0, len(result.get("rule", "")) / 90))
+        self.overlay = None
+        # their faces, as it sinks in
+        for i, line in enumerate(scene.get("reactions", [])):
+            who = line["speaker"]
+            mood = None
+            if spin.get("who") == who and i == 0:
+                mood = "worried" if not self.stage.models[who].deadpan else "stare"
+            self._shot_say({"say": who, "line": line["text"], "mood": mood,
+                            "to": "camera" if i == 0 else "other", "frame": "close"}, {"say": 1})
+        self._cut(None)
+        self._clear_bubbles()
+
+    def _scene_rules(self, scene: dict) -> None:
+        start = self.t
+        rows = [("Project", scene["project"]), ("Language", scene["language"]), ("Rule", scene["limit"]),
+                ("Gilfoyle codes as", scene["skills"].get("Codex", "")),
+                ("Dinesh codes as", scene["skills"].get("Claude", ""))]
+        self.overlay = lambda p, t: paint_big_card(p, self.size, t - start, "THE RULES", rows,
+                                                   footer="Checked automatically after every turn.")
+        self.sfx("alert", 0.5)
+        self.advance(5.5)
+        self.overlay = None
+        self.hud = {"rules": f"{scene['project'].upper()} · {scene['language'].upper()} · {scene['limit'].upper()}",
+                    "violations": 0, "tests": "-", "turn": 0}
+
+    def _scene_turn_card(self, scene: dict) -> None:
+        agent = scene["agent"]
+        self._cut(None)
+        self._clear_bubbles()
+        if self.hud is not None:
+            self.hud["turn"] = scene["turn"]
+            if scene.get("tests"):
+                self.hud["tests"] = scene["tests"]
+        self._working(agent, "coding")
+        self.stage.models[agent].set_base("coding")
+        self.stage.models[other_of(agent)].set_base("waiting")
+        self.stage.badge(f"TURN {scene['turn']} · {CHARACTER[agent].upper()}", "center", ACCENT[agent], 1.6)
+        self.sfx("handoff", 0.6)
+        self.advance(1.5)
+
+    def _scene_confessional(self, scene: dict) -> None:
+        who = scene["speaker"]
+        if scene.get("label"):
+            self.stage.badge(scene["label"], "center", "#f2c94c", 1.4)
+        self._shot_say({"say": who, "line": scene["text"], "mood": "smug", "to": "camera", "frame": "close"}, {})
+        self._cut(None)
+
+    def _scene_violation(self, scene: dict) -> None:
+        check = self.events.get(scene["check"])
+        if not check:
+            return
+        agent = scene["agent"]
+        other = other_of(agent)
+        v = check["violations"][0]
+        detail = f"[{v['rule'].replace('_', ' ')}]  {v['path']}:{v['line']}" if v.get("line") else \
+            f"[{v['rule'].replace('_', ' ')}]  {v['path']}"
+        start = self.t
+        heading = "RULE VIOLATION" if scene["new"] == 1 else f"{scene['new']} RULE VIOLATIONS"
+        self._cut(None)
+        self._clear_bubbles()
+        self.overlay = lambda p, t: paint_violation(p, self.size, t - start, heading, detail)
+        self.sfx("alert")
+        self.stage.shake(8)
+        self.advance(2.2)
+        self.overlay = None
+        if self.hud is not None:
+            self.hud["violations"] = scene["total"]
+        exhibit = {"kind": "diff", "path": v["path"], "lines": [["add", v["text"]]]}
+        lines = exhibit_lines(exhibit, v["text"][:20])
+        start = self.t
+        self.overlay = lambda p, t: paint_exhibit(p, self.size, t - start, exhibit, lines,
+                                                  f"CAUGHT: {CHARACTER[agent].upper()}")
+        self.advance(2.4)
+        self.overlay = None
+        m = self.stage.models[agent]
+        self._cut(agent, 2.4, 0.08)
+        m.look_at_other(1.6, speed=1.4)
+        m.react("stare" if m.deadpan else "worried", 2.0)
+        self.advance(1.3)
+        o = self.stage.models[other]
+        self._cut(other, 2.4, 0.08)
+        o.look_at_other(1.8)
+        o.react("smug" if o.deadpan else "gloating", 2.2)
+        self._consider_thumbnail("react", "gloating")
+        self.sfx("yes" if other == "Claude" else "wahwah", 0.8)
+        self.advance(1.6)
+        self._cut(None)
+
+    def _scene_cleared(self, scene: dict) -> None:
+        agent = scene["agent"]
+        if self.hud is not None:
+            self.hud["violations"] = scene["total"]
+        self._cut(agent, 2.2, 0.05)
+        self.stage.badge(f"✓ {scene['fixed']} RULE BREAK{'S' if scene['fixed'] != 1 else ''} FIXED", "center",
+                         "#7bd88f", 2.0)
+        self.stage.models[agent].react("smug" if self.stage.models[agent].deadpan else "pleased", 2.0)
+        self.sfx("chime", 0.8)
+        self.advance(1.8)
+        self._cut(None)
+
+    def _scene_demo(self, scene: dict) -> None:
+        agent = next((e["agent"] for e in reversed(self.all_events) if e["kind"] == "entry"), "Codex")
+        feed = self.feeds[agent]
+        self._clear_bubbles()
+        self._cut_to_screen(agent)
+        self.stage.badge("THE DEMO", "center", "#7bd88f", 1.6)
+        started = False
+        for line in scene["lines"]:
+            if re.match(r"^\s*(?:\$|>|PS [^>]*>|[A-Za-z]:\\[^>]*>)", line) or not started:
+                feed.command(re.sub(r"^\s*(?:\$|>|PS [^>]*>|[A-Za-z]:\\[^>]*>)\s*", "", line))
+                self._typing_until = self.t + 0.5
+                started = True
+                self.advance(0.9)
+            else:
+                feed.output(line)
+                self.advance(0.28)
+        self.advance(2.0)
+        self._typing_until = 0.0
         self._cut(None)
 
     def _consider_thumbnail(self, moment: str | None, mood: str | None = None) -> None:

@@ -31,6 +31,12 @@ def make_plan(project_dir: Path, progress=print, writers: bool = False, settings
     events = read_events(out / "events.jsonl")
     if not any(e["kind"] == "entry" for e in events):
         raise RuntimeError("no agent turns were captured for this project; nothing to cut")
+    if any(e["kind"] == "spin" for e in events):  # a Wheel of Destiny challenge: its own format, no writers
+        from .challenge_plan import plan_challenge
+
+        plan = plan_challenge(events, project_dir)
+        progress(f"plan: challenge episode, {len(plan['scenes'])} scenes")
+        return plan
     plan = plan_cut(events, target_seconds=target_seconds)
     progress(f"plan: {len(plan['scenes'])} scenes from {len(events)} logged events "
              f"(about {plan['estimated_seconds'] / 60:.1f} min)")
@@ -82,7 +88,9 @@ def build_episode(project_dir: Path, progress=print, plan: dict | None = None, s
 
 
 def youtube_title(plan: dict) -> str:
-    if plan.get("project"):  # a written episode has its own title
+    if plan.get("format") == "challenge":
+        title = f"AI vs AI: {plan['title'].rstrip('.')} | Wheel of Destiny"
+    elif plan.get("project"):  # a written episode has its own title
         title = f"{plan['title']} | Gilfoyle & Dinesh Build {_title_case(plan['project'])}"
     else:
         title = f"Gilfoyle & Dinesh Build {_title_case(plan['title'])}"

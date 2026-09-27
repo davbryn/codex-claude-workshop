@@ -81,15 +81,16 @@ LIMITS = [
           "Build what you need.", "#6f9dff"),
 ]
 
-PROJECTS = [
-    "a command-line habit tracker: add habits, check them off for today, show current and best streaks; data in a file",
-    "a command-line to-do list with priorities and due dates; data in a file",
-    "a tip calculator and bill splitter for a group dinner",
-    "a command-line Hangman game against the computer",
-    "a Roman numeral converter (both ways) with a small command-line interface",
-    "a Markdown table formatter: reads a messy table, prints it neatly aligned",
-    "a command-line pomodoro timer that logs completed sessions to a file",
-    "a word-frequency counter for a text file that prints the top N words",
+PROJECTS = [  # (label on the wheel, the brief)
+    ("Habit Tracker", "a command-line habit tracker: add habits, check them off for today, show current and best "
+                      "streaks; data in a file"),
+    ("To-Do List", "a command-line to-do list with priorities and due dates; data in a file"),
+    ("Bill Splitter", "a tip calculator and bill splitter for a group dinner"),
+    ("Hangman", "a command-line Hangman game against the computer"),
+    ("Roman Numerals", "a Roman numeral converter (both ways) with a small command-line interface"),
+    ("Table Formatter", "a Markdown table formatter: reads a messy table, prints it neatly aligned"),
+    ("Pomodoro Timer", "a command-line pomodoro timer that logs completed sessions to a file"),
+    ("Word Counter", "a word-frequency counter for a text file that prints the top N words"),
 ]
 
 
@@ -142,8 +143,8 @@ def spin_all(rng: random.Random | None = None, project: bool = False) -> list[Sp
 
     spins = []
     if project:
-        spins.append(spin("project", None, [Slice(f"p{i}", p.split(":")[0].replace("a command-line ", "").title()[:28],
-                                                  p) for i, p in enumerate(PROJECTS)]))
+        spins.append(spin("project", None, [Slice(f"p{i}", label, brief, LANGUAGE_COLOURS[i % len(LANGUAGE_COLOURS)])
+                                            for i, (label, brief) in enumerate(PROJECTS)]))
     spins.append(spin("skill", "Codex", SKILLS))
     spins.append(spin("skill", "Claude", SKILLS))
     spins.append(spin("language", None, language_slices()))
