@@ -102,12 +102,16 @@ def build_episode(project_dir: Path, progress=print, plan: dict | None = None, s
 def youtube_title(plan: dict) -> str:
     if plan.get("format") == "challenge":
         h = plan.get("headline") or {}
-        title = f"I Made Two AIs Build {h.get('project', plan['project'])} in {h.get('language', '')} With " \
-                f"{h.get('limit', '')}"
-        if h.get("twist"):
-            title += f". Then the Wheel Added {h['twist']}"
-        title = title.replace("With No ", "With NO ")
-    elif plan.get("project"):  # a written episode has its own title
+        limit = h.get("limit", "").replace("No ", "NO ", 1)
+        title = f"I Made Two AIs Build {h.get('project', plan['project'])} in {h.get('language', '')} With {limit}"
+        twist = h.get("twist")
+        if twist:
+            for extra in (f". Then the Wheel Added {twist}", f" (Plot Twist: {twist})", " (Plus a Plot Twist)"):
+                if len(title + extra) <= 100:
+                    title += extra
+                    break
+        return title
+    if plan.get("project"):  # a written episode has its own title
         title = f"{plan['title']} | Gilfoyle & Dinesh Build {_title_case(plan['project'])}"
     else:
         title = f"Gilfoyle & Dinesh Build {_title_case(plan['title'])}"
