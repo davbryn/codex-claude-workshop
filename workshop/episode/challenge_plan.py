@@ -101,6 +101,15 @@ def plan_challenge(events: list[dict], project_dir: Path | None = None) -> dict:
         scenes.append({"kind": "wheel", "spin": spin["id"], "reactions": _reaction_lines(spin, reactions),
                        "chapter": "The Wheel of Destiny" if spin is opening[0] else None})
     scenes.append({"kind": "rules", **h})
+    # the best meanwhile bits (what the waiting one got up to), at most three, never two in one turn
+    bits = [e for e in events if e["kind"] == "bit" and e["bit"].get("line")]
+    best_bits = sorted(bits, key=lambda e: -punch(e["bit"]["line"], CHARACTER[
+        "Claude" if e["agent"] == "Codex" else "Codex"]))
+    chosen_bits: list[dict] = []
+    for b in best_bits:
+        if len(chosen_bits) < 3 and all(abs(b["id"] - c["id"]) > 30 for c in chosen_bits):
+            chosen_bits.append(b)
+    chosen_ids = {b["id"] for b in chosen_bits}
     # -- the build: a montage that stops only for real moments
     prev_count = 0
     counts = {a: 0 for a in AGENTS}
@@ -124,6 +133,9 @@ def plan_challenge(events: list[dict], project_dir: Path | None = None) -> dict:
             scenes.append({"kind": "screen", "agent": agent, "show": {"type": "diff", "events": [diffs[0]["id"]]},
                            "aside": {"speaker": agent, "text": best["text"], "event": best["id"]} if best else None,
                            "meanwhile": next((e["id"] for e in evs if e["kind"] == "bit"), None), "fast": True})
+        for b in (e for e in evs if e["id"] in chosen_ids):
+            scenes.append({"kind": "cutaway", "agent": b["agent"], "event": b["id"], "text": b["bit"]["line"],
+                           "best_bit": b is chosen_bits[0]})
         tricks = workaround_lines(entry) if entry else []
         if tricks and punch(tricks[0], CHARACTER[other]) > 0:
             scenes.append({"kind": "confessional", "speaker": agent, "text": tricks[0], "label": "THE WORKAROUND"})
@@ -234,6 +246,9 @@ def plan_short(plan: dict, events: list[dict]) -> dict:
             next((sc for sc in scenes if sc.get("label") == "THE WORKAROUND"), None)
         if drama:
             out.append(drama)
+    bit = next((sc for sc in scenes if sc["kind"] == "cutaway" and sc.get("best_bit")), None)
+    if bit:
+        out.append(bit)
     demo = next((sc for sc in scenes if sc["kind"] == "demo"), None)
     if demo:
         out.append(dict(demo, lines=demo["lines"][:7]))
