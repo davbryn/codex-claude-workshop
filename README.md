@@ -34,6 +34,8 @@ Other options:
 | `--project DIR --prompt "..."` | skip the setup screen and start a new conversation in `DIR` |
 | `--project DIR` | skip setup and continue the existing `conversation.md` in `DIR` |
 | `--first Codex\|Claude` | which agent goes first (with `--project`) |
+| `--headless` | no window: the agents build the project and the session is recorded (needs `--project` or `--demo`) |
+| `--episode` | after PROJECT COMPLETE, cut the session into an episode (see below) |
 
 ### Requirements for real agents
 
@@ -215,6 +217,26 @@ after the reset. It tries that once; you can always press Resume yourself.
 Mode and saves an MP4. The soundtrack is rebuilt from the app's own voice audio and
 sound effects rather than recorded from your speakers. Add `--record-full` to include
 the whole window.
+
+**Episodes.** Every session (windowed or `--headless`) is captured to
+`<project>/.workshop/episode/events.jsonl`: the entries, board moves and asides, the real
+diffs, commands, test results and the meanwhile bits. From that log an episode is cut
+offline on a virtual clock, with no pauses, no waiting on the agents and every line
+voiced up front:
+
+```
+python app.py --headless --episode --project C:\dev\shortener --prompt "Build ..."
+python -m workshop.episode C:\dev\shortener        # re-cut an existing session
+python -m workshop.episode C:\dev\shortener --plan-only
+```
+
+This writes `episode.mp4` (1080p), `title.txt`, `description.md` (with YouTube chapters),
+`thumbnail.png` and `script.json` (every scene points at the logged events it came from).
+Nothing is uploaded. In a headless run nobody can answer a `HUMAN DECISION NEEDED`, so
+management replies "out of office" and the agents decide for themselves. The current cut
+is verbatim: every spoken word is something an agent actually wrote. Published episodes
+are a fan homage to HBO's *Silicon Valley*; the description says so, and says it isn't
+affiliated with the show.
 
 **Theatre Mode** (F11) hides the header, dashboard and diagnostics and gives the stage
 most of the window, which is handy on a second monitor.

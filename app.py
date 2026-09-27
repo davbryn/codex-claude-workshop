@@ -38,6 +38,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                                                         "quits a few seconds after PROJECT COMPLETE")
     parser.add_argument("--record-full", action="store_true",
                         help="record the whole window instead of Theatre Mode")
+    parser.add_argument("--headless", action="store_true",
+                        help="run the workshop with no window (needs --project or --demo); it is recorded for an episode")
+    parser.add_argument("--episode", action="store_true",
+                        help="after PROJECT COMPLETE, cut the session into an episode (<project>/.workshop/episode/)")
     return parser.parse_args(argv)
 
 
@@ -96,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
         {"Codex": setup.codex_personality, "Claude": setup.claude_personality},
         protocol_file=protocol_file,
     )
+    if args.headless:
+        return _run_headless(app, orchestrator, settings, args, demo=args.demo)
     if args.record:
         settings.save = lambda *a, **k: None  # a recording session doesn't change your saved settings
         settings.speech_muted = False
@@ -104,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
     window = MainWindow(orchestrator, settings, fake_agents=args.fake_agents, demo=args.demo,
                         demo_auto_reply=demo_auto_reply, pace=True)
     window.show()
+    from workshop.episode.capture import SessionCapture
+
+    # every run is recorded, so any session can be cut into an episode later
+    window._capture = SessionCapture(orchestrator, side_bits=window.director._bits, drive_bits=False, parent=window)
+    if args.episode:
+        _build_episode_on_complete(app, orchestrator, setup.project_dir, quit_after=False)
     from workshop.watchdog import FreezeWatchdog
 
     # If the window ever stops responding, record exactly where (see .workshop/logs/freeze-*.log).
@@ -114,6 +126,98 @@ def main(argv: list[str] | None = None) -> int:
         _start_recording(app, window, orchestrator, Path(args.record))
     orchestrator.start()
     return app.exec()
+
+
+def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Settings, args, demo: bool) -> int:
+    """No window: the agents build the project, everything is recorded, then (optionally) an episode is cut."""
+    import time
+
+    from PySide6.QtCore import QTimer
+
+    from workshop import orchestrator as orch
+    from workshop.episode.capture import SessionCapture
+    from workshop.theatre.banter import make_prompt_theatre
+    from workshop.theatre.sidebits import SideBits
+
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    orchestrator.prompt_theatre = make_prompt_theatre(settings)
+    real = not args.fake_agents
+    bits = SideBits(orchestrator.adapters) if (real and settings.side_bits_enabled) else None
+    if bits is not None:
+        bits.log_dir = orchestrator.project_dir / ".workshop" / "logs"
+    scripted = None
+    if demo:
+        from workshop.agents.demo_files import DEMO_BITS
+
+        scripted = DEMO_BITS
+    capture = SessionCapture(orchestrator, side_bits=bits, drive_bits=True, scripted_bits=scripted)
+    started = time.monotonic()
+
+    def say(text: str) -> None:
+        print(f"[{int(time.monotonic() - started) // 60:02d}:{int(time.monotonic() - started) % 60:02d}] {text}",
+              flush=True)
+
+    orchestrator.turn_started.connect(lambda agent, n: say(f"{agent} turn {n} started"))
+    orchestrator.turn_finished.connect(lambda agent, code: say(f"{agent} turn finished (exit {code})"))
+    orchestrator.message.connect(lambda level, text: say(f"{level}: {text.splitlines()[0][:160]}"))
+
+    def on_state(state: str) -> None:
+        if state == orch.WAITING_HUMAN and not orchestrator.is_busy():
+            # nobody is watching: management is out of office
+            from workshop.conversation import parse_conversation
+
+            signal = orchestrator.last_signal
+            turns = [t for t in parse_conversation(orchestrator.conversation_text()) if t.speaker != "Human"]
+            last = turns[-1] if turns else None
+            agent = (last.handoff if last and last.handoff else
+                     ("Claude" if last and last.speaker == "Codex" else "Codex"))
+            say(f"human decision requested ({(signal.detail if signal else '')[:120]}); answering for management")
+            QTimer.singleShot(500, lambda: orchestrator.submit_human_turn(
+                "Management is out of office (this is a headless run). Make the call yourselves, "
+                "write down what you decided and why, and carry on.", agent, title="Out of office"))
+        elif state == orch.COMPLETE:
+            say("PROJECT COMPLETE")
+        elif state in (orch.STOPPED, orch.NEEDS_ATTENTION):
+            say(f"stopped: {state}. The log so far is kept; you can still cut an episode from it.")
+            QTimer.singleShot(1000, app.quit)
+
+    orchestrator.state_changed.connect(on_state)
+    if args.episode:
+        _build_episode_on_complete(app, orchestrator, orchestrator.project_dir, quit_after=True, say=say)
+    else:
+        orchestrator.state_changed.connect(lambda s: QTimer.singleShot(1500, app.quit) if s == orch.COMPLETE else None)
+    say(f"headless workshop in {orchestrator.project_dir}")
+    orchestrator.start()
+    code = app.exec()
+    capture.deleteLater()
+    if bits is not None:
+        bits.shutdown()
+    return code
+
+
+def _build_episode_on_complete(app: QApplication, orchestrator: Orchestrator, project: Path, quit_after: bool,
+                               say=print) -> None:
+    from PySide6.QtCore import QTimer
+
+    from workshop import orchestrator as orch
+
+    def build() -> None:
+        from workshop.episode.build import build_episode
+
+        say("cutting the episode…")
+        try:
+            out = build_episode(project, progress=say)
+            say(f"episode ready: {out}")
+        except Exception as exc:  # the workshop itself succeeded; the edit failing shouldn't hide that
+            say(f"episode build failed: {exc}")
+        if quit_after:
+            app.quit()
+
+    orchestrator.state_changed.connect(lambda s: QTimer.singleShot(2000, build) if s == orch.COMPLETE else None)
 
 
 def _start_recording(app: QApplication, window: MainWindow, orchestrator: Orchestrator, output: Path) -> None:
