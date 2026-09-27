@@ -222,7 +222,7 @@ def validate(script: dict, events: list[dict], log: list[str] | None = None) -> 
                 shots.append({"sting": shot["sting"]})
             elif "caption" in shot:
                 text = " ".join(str(shot.get("caption", "")).split())[:34]
-                if text and not check_line(text, "", "aside", record, limit=34) and not _repeats(text, said[-2:], 0.5):
+                if text and not check_line(text, "", "aside", record, limit=34) and not _repeats(text, said, 0.5):
                     shots.append({"caption": text})
         if any("say" in s for s in shots):
             scenes.append({"name": str(sc.get("name", ""))[:60], "shots": shots})
