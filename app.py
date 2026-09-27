@@ -40,6 +40,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="record the whole window instead of Theatre Mode")
     parser.add_argument("--headless", action="store_true",
                         help="run the workshop with no window (needs --project or --demo); it is recorded for an episode")
+    parser.add_argument("--challenge", action="store_true",
+                        help="spin the Wheel of Destiny first: skill levels, language and a limitation (with --project; "
+                             "without --prompt the wheel picks the project too)")
+    parser.add_argument("--seed", type=int, default=None, help="seed for the wheel (repeatable spins)")
     parser.add_argument("--episode", action="store_true",
                         help="after PROJECT COMPLETE, cut the session into an episode (<project>/.workshop/episode/)")
     return parser.parse_args(argv)
@@ -53,6 +57,19 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings.load()
 
     demo_auto_reply = None
+    spins = None
+    if args.challenge:
+        import random
+
+        from workshop import challenge
+
+        if not args.project:
+            print("--challenge needs --project", file=sys.stderr)
+            return 2
+        spins = challenge.spin_all(random.Random(args.seed), project=not args.prompt)
+        args.prompt = challenge.brief(args.prompt or "", spins)
+        for spin in spins:
+            print(f"WHEEL ({spin.wheel}{' for ' + spin.who if spin.who else ''}): {spin.slice.label}", flush=True)
     if args.demo:
         from workshop.agents.demo_script import DEMO_FIRST_AGENT, DEMO_PROMPT
 
@@ -100,8 +117,10 @@ def main(argv: list[str] | None = None) -> int:
         {"Codex": setup.codex_personality, "Claude": setup.claude_personality},
         protocol_file=protocol_file,
     )
+    if spins is not None:
+        (setup.project_dir / "CHALLENGE.md").write_text(challenge.rules_text(spins) + "\n", encoding="utf-8")
     if args.headless:
-        return _run_headless(app, orchestrator, settings, args, demo=args.demo)
+        return _run_headless(app, orchestrator, settings, args, demo=args.demo, spins=spins)
     if args.record:
         settings.save = lambda *a, **k: None  # a recording session doesn't change your saved settings
         settings.speech_muted = False
@@ -114,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # every run is recorded, so any session can be cut into an episode later
     window._capture = SessionCapture(orchestrator, side_bits=window.director._bits, drive_bits=False, parent=window)
+    if spins is not None:
+        window._referee = _start_challenge(orchestrator, window._capture, spins, real=not args.fake_agents)
     if args.episode:
         _build_episode_on_complete(app, orchestrator, setup.project_dir, quit_after=False,
                                    writers=not args.fake_agents)
@@ -129,7 +150,19 @@ def main(argv: list[str] | None = None) -> int:
     return app.exec()
 
 
-def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Settings, args, demo: bool) -> int:
+def _start_challenge(orchestrator: Orchestrator, capture, spins, real: bool, say=print):
+    from workshop.challenge_run import ChallengeReferee, log_spins, spin_reactions
+
+    reactions = {}
+    if real:
+        say("the cast is reacting to the wheel…")
+        reactions = spin_reactions(spins, orchestrator.adapters, progress=say)
+    log_spins(capture, spins, reactions)
+    return ChallengeReferee(orchestrator, capture, spins, progress=say)
+
+
+def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Settings, args, demo: bool,
+                  spins=None) -> int:
     """No window: the agents build the project, everything is recorded, then (optionally) an episode is cut."""
     import time
 
@@ -157,6 +190,7 @@ def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Setti
         scripted = DEMO_BITS
     capture = SessionCapture(orchestrator, side_bits=bits, drive_bits=True, scripted_bits=scripted)
     started = time.monotonic()
+    referee = None
 
     def say(text: str) -> None:
         print(f"[{int(time.monotonic() - started) // 60:02d}:{int(time.monotonic() - started) % 60:02d}] {text}",
@@ -193,6 +227,8 @@ def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Setti
     else:
         orchestrator.state_changed.connect(lambda s: QTimer.singleShot(1500, app.quit) if s == orch.COMPLETE else None)
     say(f"headless workshop in {orchestrator.project_dir}")
+    if spins is not None:
+        referee = _start_challenge(orchestrator, capture, spins, real=real, say=say)  # noqa: F841
     orchestrator.start()
     code = app.exec()
     capture.deleteLater()
