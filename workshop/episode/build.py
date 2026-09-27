@@ -42,7 +42,14 @@ def make_plan(project_dir: Path, progress=print, writers: bool = False, settings
             from ..config import Settings
 
             settings = Settings.load()
-        plan = punch_up(plan, events, make_adapters(settings, fake=False), progress=progress, log_dir=out)
+        from .scenes import write_episode
+
+        adapters = make_adapters(settings, fake=False)
+        written = write_episode(events, adapters, progress=progress, log_dir=out)
+        if written is not None:
+            return written
+        progress("writers' room: falling back to the edited cut, punched up line by line")
+        plan = punch_up(plan, events, adapters, progress=progress, log_dir=out)
     return plan
 
 
@@ -75,7 +82,10 @@ def build_episode(project_dir: Path, progress=print, plan: dict | None = None, s
 
 
 def youtube_title(plan: dict) -> str:
-    title = f"Gilfoyle & Dinesh Build {_title_case(plan['title'])}"
+    if plan.get("project"):  # a written episode has its own title
+        title = f"{plan['title']} | Gilfoyle & Dinesh Build {_title_case(plan['project'])}"
+    else:
+        title = f"Gilfoyle & Dinesh Build {_title_case(plan['title'])}"
     return title if len(title) <= 100 else title[:97] + "…"
 
 
@@ -146,5 +156,10 @@ def make_thumbnail(frame, plan: dict):
     p.setFont(sub)
     p.setPen(QColor("#f2c94c"))
     p.drawText(QRectF(40, 140, 1200, 60), Qt.AlignmentFlag.AlignLeft, plan["title"].upper()[:48])
+    if plan.get("project"):
+        sub.setPixelSize(30)
+        p.setFont(sub)
+        p.setPen(QColor("#ffffff"))
+        p.drawText(QRectF(42, 196, 1200, 44), Qt.AlignmentFlag.AlignLeft, plan["project"].upper()[:60])
     p.end()
     return image

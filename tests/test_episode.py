@@ -151,3 +151,64 @@ def test_punch_up_applies_checked_lines_and_labels_the_episode(monkeypatch):
     assert cut["text"] == "Cc HR."  # "99" isn't in the record: rejected, original kept
     assert out["disclaimer"].startswith("Dramatised")
     assert plan["disclaimer"] == DISCLAIMER_VERBATIM  # the input plan is untouched
+
+
+# -- written scenes ----------------------------------------------------------------------------
+
+from workshop.episode.scenes import script_text, to_plan, validate  # noqa: E402
+from workshop.episode.facts import fact_sheet  # noqa: E402
+
+
+def _script(**extra):
+    base = {"title": "Encode Zero", "logline": "x", "runner": "y", "scenes": [
+        {"name": "Cold open", "shots": [
+            {"say": "Dinesh", "line": "Your encode(n) returns nothing.", "mood": "gloating"},
+            {"react": "Gilfoyle", "mood": "stare", "seconds": 9},
+            {"show": "E5", "highlight": "return ''", "caption": "Exhibit A"},
+        ]},
+        {"name": "Later", "shots": [
+            {"say": "gilfoyle", "line": "All 42 tests failed.", "to": "camera"},   # invented number: cut
+            {"say": "Gilfoyle", "line": "Cc HR.", "to": "camera"},
+            {"say": "Jared", "line": "Guys?"},                                     # not a character: cut
+            {"show": "E99"},                                                       # no such exhibit: dropped
+            {"meanwhile": "E8"}, {"sting": "wahwah"}, {"sting": "airhorn"}, {"beat": "long"},
+        ]},
+    ]}
+    base.update(extra)
+    return base
+
+
+def test_validate_cuts_invented_facts_and_unknown_things():
+    log = []
+    s = validate(_script(), _events(), log)
+    first, second = s["scenes"]
+    assert first["shots"][0] == {"say": "Claude", "line": "Your encode(n) returns nothing.", "mood": "gloating",
+                                 "to": "other", "frame": "wide"}
+    assert first["shots"][1]["seconds"] == 3.0  # clamped
+    assert first["shots"][2] == {"show": 5, "highlight": "return ''", "caption": "Exhibit A"}
+    says = [x for x in second["shots"] if "say" in x]
+    assert [x["line"] for x in says] == ["Cc HR."] and says[0]["frame"] == "close"
+    assert {"meanwhile": 8} in second["shots"] and {"sting": "wahwah"} in second["shots"]
+    assert not any(x.get("sting") == "airhorn" for x in second["shots"])
+    assert {"beat": 0.8} in second["shots"]
+    assert any("42" in line for line in log)
+
+
+def test_validate_rejects_scripts_with_too_little_left():
+    assert validate({"scenes": [{"name": "a", "shots": [{"say": "Dinesh", "line": "Hi."}]}]}, _events()) is None
+    assert validate({"nope": 1}, _events()) is None
+
+
+def test_to_plan_puts_the_title_after_the_cold_open():
+    plan = to_plan(validate(_script(), _events()), _events())
+    kinds = [s["kind"] for s in plan["scenes"]]
+    assert kinds == ["sketch", "title", "sketch", "finale"]
+    assert plan["scenes"][0]["cold_open"] and plan["scenes"][0]["chapter"] == "Cold open"
+    assert plan["project"] == "Tiny URL shortener" and plan["disclaimer"].startswith("Dramatised")
+    assert "[L1] DINESH: Your encode(n)" in script_text(validate(_script(), _events()))
+
+
+def test_fact_sheet_numbers_exhibits():
+    sheet = fact_sheet(_events())
+    assert "E5: Dinesh creates short.py" in sheet and "E7: Dinesh's test run FAILS" in sheet
+    assert "E8: meanwhile Gilfoyle" in sheet and "TURN 1: DINESH" in sheet

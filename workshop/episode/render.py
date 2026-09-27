@@ -14,7 +14,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPen
 
 from ..conversation import AGENTS
@@ -26,6 +26,7 @@ from ..theatre.sfx import CACHE_DIR, ensure_effects
 from ..theatre.text import clean_for_speech
 from ..ui.recorder import find_ffmpeg
 from .capture import other_of
+from .overlays import exhibit_lines, paint_exhibit, paint_subtitle
 from .voice import Voices
 
 MOMENT_SFX = {"dinesh_catches": "yes", "gilfoyle_catches": "blast", "concession": "wahwah", "own_goal": "wahwah",
@@ -55,6 +56,8 @@ class EpisodeRenderer:
         self.thumbnail: QImage | None = None
         self._thumb_score = -1
         self.overlay = None  # callable(painter, t) drawn over the stage (title cards, lower thirds)
+        self.cam: tuple | None = None  # (agent, zoom, since, push): a close-up on his face; None = the room
+        self.subtitle: tuple[str, str] | None = None  # (agent, text) shown on close-ups
         self._speech = None  # (agent, start, duration, envelope, text_len)
         self._typing_until = 0.0
         self._next_key = 0.0
@@ -110,17 +113,39 @@ class EpisodeRenderer:
         i = int((self.t - start) * 100)
         return float(env[i]) if 0 <= i < len(env) else 0.0
 
-    def _write_frame(self) -> None:
+    def _compose(self, bubbles: bool = True) -> QImage:
         image = QImage(self.out_w, self.out_h, QImage.Format.Format_ARGB32)
         image.setDevicePixelRatio(self.scale)
         image.fill(QColor("#07080a"))
-        self.stage.render(image)
+        p = QPainter(image)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        saved = []
+        if not bubbles or self.cam is not None:  # close-ups use subtitles, not bubbles
+            saved = [(b, b.kind) for b in self.stage.bubbles.values()]
+            for b, _ in saved:
+                b.kind = "none"
+        if self.cam is not None:
+            agent, zoom, since, push = self.cam
+            zoom *= 1.0 + push * min(1.0, (self.t - since) / 4.0)  # a slow documentary push-in
+            head = self.stage._head_anchor(agent, self.stage._layout())
+            w, h = self.size
+            p.translate(w / 2, h * 0.47)
+            p.scale(zoom, zoom)
+            p.translate(-head.x(), -head.y())
+        self.stage.render(p, QPoint(0, 0))
+        p.resetTransform()
+        for b, kind in saved:
+            b.kind = kind
+        if self.subtitle is not None and self.cam is not None:
+            paint_subtitle(p, self.size, *self.subtitle)
         if self.overlay is not None:
-            p = QPainter(image)
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
             self.overlay(p, self.t)
-            p.end()
+        p.end()
+        return image
+
+    def _write_frame(self) -> None:
+        image = self._compose()
         self._last_image = image
         self._pipe.stdin.write(bytes(image.constBits())[: self.out_w * self.out_h * 4])
         self.frames += 1
@@ -390,22 +415,154 @@ class EpisodeRenderer:
 
     # -- thumbnail --------------------------------------------------------------------------------
 
-    def _consider_thumbnail(self, moment: str | None) -> None:
+    # -- written scenes -------------------------------------------------------------------------
+
+    def _cut(self, agent: str | None, zoom: float = 2.5, push: float = 0.06) -> None:
+        """A hard cut: to his face (agent) or back to the room (None)."""
+        if self.stage.shot_agent is not None:
+            self.stage.set_shot(None)
+            self.stage.shot_blend = 0.0
+            self.stage.set_caption(None, "")
+        self.cam = (agent, zoom, self.t, push) if agent else None
+
+    def _cut_to_screen(self, agent: str) -> None:
+        self.cam = None
+        self.stage.set_shot(agent)
+        self.stage.shot_blend = 1.0  # hard cut, no push-in
+
+    def _scene_sketch(self, scene: dict) -> None:
+        self._clear_bubbles()
+        self._cut(None)
+        shots = scene.get("shots", [])
+        for i, shot in enumerate(shots):
+            nxt = shots[i + 1] if i + 1 < len(shots) else {}
+            if "say" in shot:
+                self._shot_say(shot, nxt)
+            elif "react" in shot:
+                who = shot["react"]
+                self._cut(who, 2.7, 0.08)
+                m = self.stage.models[who]
+                m.look_at_other(shot["seconds"] + 0.4, speed=1.6 if m.deadpan else None)
+                m.react(shot.get("mood") or "stare", shot["seconds"] + 0.6)
+                self.advance(min(0.5, shot["seconds"]))
+                self._consider_thumbnail("react", shot.get("mood"))
+                self.advance(max(0.0, shot["seconds"] - 0.5))
+            elif "beat" in shot:
+                self._cut(None)
+                self._clear_bubbles()
+                for a in AGENTS:
+                    self.stage.models[a].look_at_other(shot["beat"] + 0.3, speed=1.5)
+                self.advance(shot["beat"])
+            elif "show" in shot:
+                self._shot_show(shot)
+            elif "meanwhile" in shot:
+                self._shot_meanwhile(shot["meanwhile"])
+            elif "sting" in shot:
+                self.sfx(shot["sting"])
+            elif "caption" in shot:
+                self.stage.badge(shot["caption"], "center", "#f2c94c", 2.6)
+                self.advance(0.2)
+        self._cut(None)
+        self._clear_bubbles()
+        self.advance(0.35)
+
+    def _shot_say(self, shot: dict, nxt: dict) -> None:
+        who = shot["say"]
+        other = other_of(who)
+        m = self.stage.models[who]
+        self._clear_bubbles()
+        self.stage.set_active(who)
+        if shot.get("to") == "camera":
+            self._cut(who, 2.2, 0.05)
+            m.look(0.0, 0.0, 30.0)  # straight down the lens
+        elif shot.get("frame") == "close":
+            self._cut(who, 2.5, 0.05)
+            m.look_at_other(30.0)
+        else:
+            self._cut(None)
+            m.look_at_other(30.0)
+            self.stage.models[other].look_at_other(4.0)
+        if shot.get("mood"):
+            m.react(shot["mood"], 30.0)
+        self.subtitle = (who, shot["line"])
+        duration = self.speak(who, shot["line"], delay=0.08, bubble=self.cam is None)
+        self.advance(duration)
+        m.clear_reaction()
+        m._look_until = 0.0
+        self.subtitle = None
+        # comic timing: a hair of air between lines, a real pause before a silent reaction
+        self.advance(0.12 if "say" in nxt else 0.3)
+
+    def _shot_show(self, shot: dict) -> None:
+        e = self.events.get(shot["show"])
+        if not e:
+            return
+        if e["kind"] == "bit":
+            self._shot_meanwhile(e["id"])
+            return
+        agent = e.get("agent") or "Codex"
+        feed = self.feeds[agent]
+        self._clear_bubbles()
+        board = self._board_at(e["id"])
+        if board is not None:
+            self.stage.set_board(board)
+        if e["kind"] == "diff":
+            feed.show_diff(FileChange(e["path"], [tuple(x) for x in e["lines"]], e.get("created", False),
+                                      e.get("deleted", False)))
+            typing = min(3.0, len(e["lines"]) / TYPE_RATE)
+            self._typing_until = self.t + typing
+            self._cut_to_screen(agent)
+            self.advance(max(1.6, typing + 0.4))
+        else:
+            cmd = next((x for x in reversed(self.all_events) if x["kind"] == "command" and x.get("agent") == agent
+                        and x["id"] < e["id"]), None)
+            feed.command(cmd["command"] if cmd else "python -m unittest")
+            self._cut_to_screen(agent)
+            self.advance(0.6)
+            feed.output(e.get("line", "") or e.get("command", ""))
+            if e["kind"] == "tests" and not e.get("ok"):
+                self.sfx("buzz", 0.8)
+            self.advance(1.4)
+        if shot.get("highlight") or shot.get("caption"):
+            start = self.t
+            lines = exhibit_lines(e, shot.get("highlight", ""))
+            caption = shot.get("caption", "")
+            self.sfx("tick", 0.9)
+            self.overlay = lambda p, t: paint_exhibit(p, self.size, t - start, e, lines, caption)
+            self.advance(2.8)
+            self.overlay = None
+        self._typing_until = 0.0
+        self._cut(None)
+
+    def _shot_meanwhile(self, event_id: int) -> None:
+        e = self.events.get(event_id)
+        if not e or e["kind"] != "bit":
+            return
+        agent = e["agent"]
+        self.feeds[agent].show_bit(dict(e["bit"], _t0=self.t))
+        self._clear_bubbles()
+        self._cut_to_screen(agent)
+        self.stage.badge("MEANWHILE", "center", ACCENT[agent], 1.6)
+        self.advance(1.3)
+        line = e["bit"].get("line", "")
+        if line:
+            self.stage.set_caption(agent, line)
+            self.advance(self.speak(agent, line, bubble=False) + 0.4)
+        else:
+            self.advance(2.0)
+        self.stage.set_caption(None, "")
+        self._cut(None)
+
+    def _consider_thumbnail(self, moment: str | None, mood: str | None = None) -> None:
         score = {"dinesh_catches": 5, "gilfoyle_catches": 5, "disagreement": 4, "own_goal": 4, "both_wrong": 3,
                  "concession": 3}.get(moment or "", 1)
+        if moment == "react":  # a face close-up is what thumbnails are made of
+            score = {"outraged": 7, "glare": 7, "embarrassed": 6, "surprised": 6, "disturbed": 6, "gloating": 7,
+                     "stare": 5}.get(mood or "", 4)
         if score <= self._thumb_score:
             return
         self._thumb_score = score
-        # the same frame without speech bubbles (a half-typed bubble looks broken on a thumbnail)
-        saved = [(b, b.kind) for b in self.stage.bubbles.values()]
-        for b, _ in saved:
-            b.kind = "none"
-        image = QImage(self.out_w, self.out_h, QImage.Format.Format_ARGB32)
-        image.setDevicePixelRatio(self.scale)
-        image.fill(QColor("#07080a"))
-        self.stage.render(image)
-        for b, kind in saved:
-            b.kind = kind
+        image = self._compose(bubbles=False)  # a half-typed bubble looks broken on a thumbnail
         self.thumbnail = image
 
     # -- audio ------------------------------------------------------------------------------------

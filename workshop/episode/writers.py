@@ -161,12 +161,12 @@ def max_chars(kind: str, original: str) -> int:
     return int(min(LIMITS[kind], max(70, len(original) * 1.2)))
 
 
-def check_line(new: str, original: str, kind: str, record: str) -> str | None:
+def check_line(new: str, original: str, kind: str, record: str, limit: int | None = None) -> str | None:
     """Why ``new`` can't be used, or None if it passes."""
     new = new.strip()
     if not new:
         return "empty"
-    limit = max_chars(kind, original)
+    limit = limit or max_chars(kind, original)
     if len(new) > limit + 10:
         return f"too long ({len(new)} > {limit})"
     if _BANNED.search(new):
