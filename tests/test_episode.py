@@ -212,3 +212,16 @@ def test_fact_sheet_numbers_exhibits():
     sheet = fact_sheet(_events())
     assert "E5: Dinesh creates short.py" in sheet and "E7: Dinesh's test run FAILS" in sheet
     assert "E8: meanwhile Gilfoyle" in sheet and "TURN 1: DINESH" in sheet
+
+
+def test_voice_timing_helpers():
+    import numpy as np
+
+    from workshop.episode.voice import delivery, pause_before, split_sentences, trim_silence
+
+    assert split_sentences("And? Don't pause. Why are you pausing?") == ["And?", "Don't pause.", "Why are you pausing?"]
+    assert split_sentences("Version 2.5 is out. Ok.") == ["Version 2.5 is out.", "Ok."]
+    assert pause_before("Codex", 2, 3) > pause_before("Codex", 1, 3)  # the button waits
+    assert delivery("Claude", "outraged", False)[0] > 1.1 and delivery("Codex", "stare", False)[0] < 1.0
+    x = np.concatenate([np.zeros(24000), np.full(100, 0.5, np.float32), np.zeros(24000)])
+    assert len(trim_silence(x)) < 2000

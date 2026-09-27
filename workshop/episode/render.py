@@ -159,10 +159,11 @@ class EpisodeRenderer:
         if data is not None:
             self.audio.append((self.t, data, self.sfx_volume * gain))
 
-    def speak(self, agent: str, text: str, delay: float = 0.0, bubble: bool = True) -> float:
+    def speak(self, agent: str, text: str, delay: float = 0.0, bubble: bool = True, mood: str | None = None,
+              to_camera: bool = False) -> float:
         """Queue a line; returns its duration. The bubble shows ``text``; the voice says a cleaned version."""
         spoken = clean_for_speech(text)
-        samples, env = self.voices.say(agent, spoken)
+        samples, env = self.voices.say(agent, spoken, mood=mood, to_camera=to_camera)
         duration = max(len(samples) / SAMPLE_RATE, len(env) / 100.0, 0.8)
         start = self.t + delay
         if self.voices.available:
@@ -485,7 +486,8 @@ class EpisodeRenderer:
         if shot.get("mood"):
             m.react(shot["mood"], 30.0)
         self.subtitle = (who, shot["line"])
-        duration = self.speak(who, shot["line"], delay=0.08, bubble=self.cam is None)
+        duration = self.speak(who, shot["line"], delay=0.08, bubble=self.cam is None, mood=shot.get("mood"),
+                              to_camera=shot.get("to") == "camera")
         self.advance(duration)
         m.clear_reaction()
         m._look_until = 0.0

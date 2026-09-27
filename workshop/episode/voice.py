@@ -50,24 +50,37 @@ class Voices:
     def available(self) -> bool:
         return self._kokoro is not None
 
-    def say(self, agent: str, text: str) -> tuple[np.ndarray, np.ndarray]:
-        """(samples at SAMPLE_RATE float32, mouth level 0..1 per 10 ms)."""
+    def say(self, agent: str, text: str, mood: str | None = None, to_camera: bool = False
+            ) -> tuple[np.ndarray, np.ndarray]:
+        """(samples at SAMPLE_RATE float32, mouth level 0..1 per 10 ms), performed rather than read.
+
+        Each sentence is voiced separately so the timing can be shaped: tight gaps
+        inside a line, and a held pause before the last sentence (the button).
+        Mood sets the pace and energy: Dinesh speeds up when he's outraged or
+        gloating, Gilfoyle slows down for a threat.
+        """
         if not text.strip():
             return np.zeros(0, np.float32), np.zeros(0, np.float32)
         if self._kokoro is None:
             return self._silent(text)
-        speed = max(0.5, min(2.0, self.speed * CHARACTER_SPEED.get(agent, 1.0)))
+        pace, gain = delivery(agent, mood, to_camera)
+        speed = max(0.5, min(2.0, self.speed * CHARACTER_SPEED.get(agent, 1.0) * pace))
+        sentences = split_sentences(text)
         parts = []
-        for chunk in split_for_streaming(text, first_max=180, growth=1.0):
-            try:
-                samples, _ = self._kokoro.create(chunk, voice=self.voices[agent], speed=speed, lang="en-us")
-            except Exception:
-                continue
-            parts.append(np.clip(np.asarray(samples, np.float32), -1, 1))
-            parts.append(np.zeros(int(SAMPLE_RATE * 0.12), np.float32))
+        for i, sentence in enumerate(sentences):
+            chunks = split_for_streaming(sentence, first_max=180, growth=1.0)
+            for chunk in chunks:
+                try:
+                    samples, _ = self._kokoro.create(chunk, voice=self.voices[agent], speed=speed, lang="en-us")
+                except Exception:
+                    continue
+                parts.append(trim_silence(np.clip(np.asarray(samples, np.float32), -1, 1) * gain))
+            if i < len(sentences) - 1:
+                parts.append(np.zeros(int(SAMPLE_RATE * pause_before(agent, i + 1, len(sentences))), np.float32))
         if not parts:
             return self._silent(text)
-        samples = np.concatenate(parts)
+        parts.append(np.zeros(int(SAMPLE_RATE * 0.08), np.float32))
+        samples = np.clip(np.concatenate(parts), -1, 1)
         return samples, envelope(samples)
 
     @staticmethod
@@ -85,3 +98,42 @@ def envelope(samples: np.ndarray) -> np.ndarray:
     rms = np.sqrt(np.mean(samples[: frames * ENVELOPE_HOP].reshape(frames, ENVELOPE_HOP) ** 2, axis=1))
     # the same loudness curve the live engine uses for the mouth
     return np.where(rms > 0.004, np.minimum(1.0, (rms / 0.16) ** 0.8), 0.0).astype(np.float32)
+
+
+FAST = {"outraged", "gloating", "celebrating", "surprised", "worried", "disagreeing", "annoyed", "highfive"}
+SLOW = {"stare", "glare", "sideeye", "disturbed", "smug", "embarrassed"}
+
+
+def delivery(agent: str, mood: str | None, to_camera: bool) -> tuple[float, float]:
+    """(pace multiplier, gain) for a line."""
+    pace, gain = 1.0, 1.0
+    if mood in FAST:
+        pace, gain = (1.04, 1.05) if agent == "Codex" else (1.14, 1.12)
+    elif mood in SLOW:
+        pace = 0.9 if agent == "Codex" else 0.95
+    if to_camera:
+        pace *= 0.96  # confessionals are a little more considered
+    return pace, gain
+
+
+def split_sentences(text: str) -> list[str]:
+    import re
+
+    # a sentence ends at . ! ? or … (optionally inside a closing quote) followed by a capital or a number
+    parts = [p.strip() for p in re.split(r"(?<=[.!?…])(?:['\"”’])?\s+(?=[A-Z0-9'\"“(])", text.strip()) if p.strip()]
+    return parts or [text.strip()]
+
+
+def pause_before(agent: str, index: int, count: int) -> float:
+    """The gap before sentence ``index``: tight inside a line, held before the button."""
+    if index == count - 1 and count >= 2:
+        return 0.42 if agent == "Codex" else 0.3
+    return 0.16 if agent == "Codex" else 0.1
+
+
+def trim_silence(samples: np.ndarray, threshold: float = 0.01, keep: float = 0.03) -> np.ndarray:
+    loud = np.flatnonzero(np.abs(samples) > threshold)
+    if not len(loud):
+        return samples
+    pad = int(SAMPLE_RATE * keep)
+    return samples[max(0, loud[0] - pad): loud[-1] + pad]
