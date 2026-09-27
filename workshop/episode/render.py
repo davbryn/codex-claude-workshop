@@ -130,7 +130,7 @@ class EpisodeRenderer:
             zoom *= 1.0 + push * min(1.0, (self.t - since) / 4.0)  # a slow documentary push-in
             head = self.stage._head_anchor(agent, self.stage._layout())
             w, h = self.size
-            p.translate(w / 2, h * 0.47)
+            p.translate(w / 2, h * 0.36)
             p.scale(zoom, zoom)
             p.translate(-head.x(), -head.y())
         self.stage.render(p, QPoint(0, 0))
@@ -440,7 +440,7 @@ class EpisodeRenderer:
                 self._shot_say(shot, nxt)
             elif "react" in shot:
                 who = shot["react"]
-                self._cut(who, 2.7, 0.08)
+                self._cut(who, 2.4, 0.08)
                 m = self.stage.models[who]
                 m.look_at_other(shot["seconds"] + 0.4, speed=1.6 if m.deadpan else None)
                 m.react(shot.get("mood") or "stare", shot["seconds"] + 0.6)
@@ -473,10 +473,10 @@ class EpisodeRenderer:
         self._clear_bubbles()
         self.stage.set_active(who)
         if shot.get("to") == "camera":
-            self._cut(who, 2.2, 0.05)
+            self._cut(who, 2.0, 0.05)
             m.look(0.0, 0.0, 30.0)  # straight down the lens
         elif shot.get("frame") == "close":
-            self._cut(who, 2.5, 0.05)
+            self._cut(who, 2.2, 0.05)
             m.look_at_other(30.0)
         else:
             self._cut(None)

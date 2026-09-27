@@ -63,7 +63,7 @@ TRUTH RULES (strict)
 STRUCTURE
 - Scene 1 is a COLD OPEN: 3-6 shots, the funniest real moment or a tease of it, ending on a laugh. (The title plays after it.)
 - Then 4-6 scenes that follow the real order of events. The last scene is the finish.
-- 30-45 spoken lines in total (about two and a half minutes).
+- 25-35 spoken lines in total (about two and a half minutes). Cut anything that is not a joke or needed for one.
 
 SHOT TYPES (a scene is a list of these)
   {{"say": "Gilfoyle"|"Dinesh", "line": "...", "mood": "<mood>", "to": "other"|"camera", "frame": "wide"|"close"}}
