@@ -11,9 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
+import sys
+
 from .base import AgentAdapter, LaunchSpec
 
-import sys
+# See pyshim/sitecustomize.py: lets Python's temp folders work inside Codex's Windows sandbox.
+PYSHIM_DIR = Path(__file__).resolve().parent / "pyshim"
 
 # On Windows, codex 0.156 silently downgrades `--sandbox workspace-write` to
 # read-only unless a Windows sandbox mode is configured.
@@ -46,4 +50,16 @@ class CodexAdapter(AgentAdapter):
             *self.extra_args,
             "-",  # read the prompt from stdin
         ]
-        return self.make_spec(path, args, stdin=prompt)
+        env = {}
+        if sys.platform == "win32":
+            existing = os.environ.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = str(PYSHIM_DIR) + (os.pathsep + existing if existing else "")
+        return self.make_spec(path, args, stdin=prompt, env=env)
+
+    # Told to Codex every turn, so nobody (Dinesh included) mistakes the sandbox for incompetence.
+    environment_note = (
+        "Your shell commands run in a Windows sandbox with no network access: creating a venv, temporary "
+        "folders and pytest's tmp_path all work, but downloading packages (pip install from PyPI) will fail. "
+        "If the project needs a package installed, say so plainly in your entry and put a To do card on the "
+        "kanban board for Claude, whose environment can install it."
+    )

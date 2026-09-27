@@ -101,13 +101,17 @@ def build_prompt(
     protocol_file: str,
     turn: int,
     theatre: str = "",
+    environment: str = "",
 ) -> str:
-    """``theatre`` is the optional character-direction layer (see workshop/theatre/cast.py)."""
+    """``theatre`` is the optional character-direction layer (see workshop/theatre/cast.py);
+    ``environment`` states facts about this agent's sandbox/tooling."""
     personality = personality.strip() or "(no particular personality — be a thoughtful, professional collaborator)"
     theatre = f"{theatre.strip()}\n\n" if theatre.strip() else ""
+    environment = f"[YOUR ENVIRONMENT]\n{environment.strip()}\n\n" if environment.strip() else ""
     return (
         f"{CORE_RULES}\n"
         f"You are {me}. Your collaborator is {other}.\n\n"
+        f"{environment}"
         f"{theatre}"
         f"[{me.upper()} PERSONALITY]\n{personality}\n\n"
         + TURN_INSTRUCTION.format(

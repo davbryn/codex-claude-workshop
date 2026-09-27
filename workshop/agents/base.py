@@ -34,6 +34,8 @@ class AgentUnavailable(Exception):
 class AgentAdapter:
     """Base class: subclasses implement :meth:`build_launch`."""
 
+    environment_note = ""  # facts about this agent's environment, added to its turn prompt
+
     name: str = "Agent"
     progress_on_stderr = False  # CLI writes normal progress to stderr (don't label it as errors)
 

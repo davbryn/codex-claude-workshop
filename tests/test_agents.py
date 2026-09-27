@@ -74,3 +74,37 @@ def test_claude_stream_json_formatting():
 def test_missing_executable_message():
     with pytest.raises(Exception, match="Claude executable not found"):
         ClaudeAdapter("no-such-claude-binary-xyz").build_launch(Path("."), "p")
+
+
+def test_codex_gets_the_sandbox_startup_hook_and_an_honest_environment_note(tmp_path, monkeypatch):
+    import sys
+
+    from workshop.agents.codex import PYSHIM_DIR, CodexAdapter
+    from workshop.prompts import build_prompt
+
+    adapter = CodexAdapter()
+    monkeypatch.setattr(adapter, "resolve_executable", lambda *a, **k: "codex.exe")
+    spec = adapter.build_launch(tmp_path, "hi")
+    if sys.platform == "win32":
+        assert spec.env["PYTHONPATH"].split(";")[0] == str(PYSHIM_DIR)
+    assert (PYSHIM_DIR / "sitecustomize.py").exists()
+    prompt = build_prompt("Codex", "Claude", "", tmp_path, "AGENT_README.md", 1, "", adapter.environment_note)
+    assert "[YOUR ENVIRONMENT]" in prompt and "no network access" in prompt and "To do card" in prompt
+    assert "[YOUR ENVIRONMENT]" not in build_prompt("Claude", "Codex", "", tmp_path, "AGENT_README.md", 1)
+
+
+def test_pyshim_makes_owner_only_dirs_usable(tmp_path):
+    import os
+    import runpy
+
+    from workshop.agents.codex import PYSHIM_DIR
+
+    original = os.mkdir
+    try:
+        runpy.run_path(str(PYSHIM_DIR / "sitecustomize.py"))
+        target = tmp_path / "t"
+        os.mkdir(target, 0o700)
+        (target / "x.txt").write_text("ok")
+        assert (target / "x.txt").read_text() == "ok"
+    finally:
+        os.mkdir = original

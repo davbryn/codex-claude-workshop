@@ -309,6 +309,21 @@ All CLI-specific code lives in `workshop/agents/`:
 Executables and extra args can be changed on the setup screen under **Advanced: agent
 commands**. They are saved to `config/settings.json`.
 
+## Codex's Windows sandbox
+
+Codex runs its shell commands in a Windows restricted-token sandbox
+(`--sandbox workspace-write`, `windows.sandbox="unelevated"`). Two things to know:
+
+* **Temporary folders.** Python 3.13+ on Windows gives temporary folders an owner-only
+  permission list, which the sandboxed process then can't use. That broke pytest's
+  `tmp_path`, `venv` and `ensurepip` for Codex. The app gives Codex's Python processes a
+  tiny startup hook (`workshop/agents/pyshim/sitecustomize.py`) that creates those
+  folders with ordinary permissions. The sandbox stays on.
+* **No network.** The sandbox can't download packages, so `pip install` from PyPI fails
+  for Codex. Its turn prompt says so plainly and asks it to leave a *To do* card on the
+  kanban for Claude, whose environment can install packages. Network access for Codex's
+  sandbox is deliberately left off.
+
 ## Safety
 
 This app deliberately launches coding agents that **edit files and run commands**.

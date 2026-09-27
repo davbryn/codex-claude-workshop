@@ -253,7 +253,8 @@ class Orchestrator(QObject):
             except Exception:
                 theatre = ""
         prompt = build_prompt(
-            agent, other, self.personalities.get(agent, ""), self.project_dir, self.protocol_file, turn, theatre
+            agent, other, self.personalities.get(agent, ""), self.project_dir, self.protocol_file, turn, theatre,
+            getattr(adapter, "environment_note", ""),
         )
         self.current_agent = agent
         self._turn_log = []
