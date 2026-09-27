@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -39,6 +40,7 @@ class SetupResult:
     claude_personality: str
     first_agent: str
     continue_existing: bool
+    challenge: bool = False  # spin the Wheel of Destiny first
 
 
 class SetupDialog(QDialog):
@@ -160,6 +162,9 @@ class SetupDialog(QDialog):
         layout.addLayout(project_row)
         layout.addWidget(QLabel("What should they build?"))
         layout.addWidget(self.prompt_edit, 2)
+        self.challenge_box = QCheckBox("🎡 Spin the Wheel of Destiny first (skill levels, language, a limitation, and a "
+                                       "twist halfway). Leave the prompt empty and the wheel picks the project too.")
+        layout.addWidget(self.challenge_box)
         layout.addLayout(preset_row)
         layout.addLayout(personalities, 3)
         layout.addLayout(first_row)
@@ -272,7 +277,7 @@ class SetupDialog(QDialog):
                 return
 
         prompt = self.prompt_edit.toPlainText().strip()
-        if not continue_existing and not prompt:
+        if not continue_existing and not prompt and not self.challenge_box.isChecked():
             QMessageBox.warning(self, "Project prompt", "Please describe what they should build.")
             return
 
@@ -304,5 +309,6 @@ class SetupDialog(QDialog):
             claude_personality=s.claude_personality,
             first_agent=first,
             continue_existing=continue_existing,
+            challenge=self.challenge_box.isChecked() and not continue_existing,
         )
         self.accept()

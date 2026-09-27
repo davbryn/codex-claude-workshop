@@ -11,7 +11,7 @@ from ..theatre.cast import CHARACTER
 from .overlays import _font
 
 WHEEL_TITLES = {"project": "SPIN {n}: THE PROJECT", "language": "SPIN {n}: THE LANGUAGE",
-                "limit": "SPIN {n}: THE LIMITATION"}
+                "limit": "SPIN {n}: THE LIMITATION", "twist": "THE TWIST WHEEL"}
 
 
 def wheel_title(spin: dict, n: int) -> str:
@@ -141,16 +141,20 @@ def paint_big_card(p: QPainter, size: tuple[int, int], age: float, heading: str,
     p.restore()
 
 
-def paint_violation(p: QPainter, size: tuple[int, int], age: float, text: str, detail: str) -> None:
-    """RULE VIOLATION: red strobe, hazard stripes, klaxon banner."""
+def paint_violation(p: QPainter, size: tuple[int, int], age: float, text: str, detail: str,
+                    colour: str = "#b3120f") -> None:
+    """RULE VIOLATION (or PLOT TWIST): strobe, hazard stripes, klaxon banner."""
     w, h = size
     p.save()
     pulse = 0.5 + 0.5 * math.sin(age * 14)
-    p.fillRect(QRectF(0, 0, w, h), QColor(200, 20, 20, int(60 + 70 * pulse)))
+    base = QColor(colour)
+    strobe = QColor(base)
+    strobe.setAlpha(int(60 + 70 * pulse))
+    p.fillRect(QRectF(0, 0, w, h), strobe)
     band = QRectF(0, h * 0.35, w, h * 0.3)
     g = QLinearGradient(band.topLeft(), band.bottomLeft())
-    g.setColorAt(0, QColor("#b3120f"))
-    g.setColorAt(1, QColor("#5c0707"))
+    g.setColorAt(0, base)
+    g.setColorAt(1, base.darker(220))
     p.fillRect(band, g)
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QColor("#f2c94c"))

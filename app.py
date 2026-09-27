@@ -100,6 +100,13 @@ def main(argv: list[str] | None = None) -> int:
         if not dialog.exec() or dialog.result_value is None:
             return 0
         setup = dialog.result_value
+        if setup.challenge and spins is None:
+            import random
+
+            from workshop import challenge
+
+            spins = challenge.spin_all(random.Random(args.seed), project=not setup.prompt)
+            setup.prompt = challenge.brief(setup.prompt, spins)
 
     if args.fake_delay is None:
         args.fake_delay = 1.6
@@ -135,6 +142,9 @@ def main(argv: list[str] | None = None) -> int:
     window._capture = SessionCapture(orchestrator, side_bits=window.director._bits, drive_bits=False, parent=window)
     if spins is not None:
         window._referee = _start_challenge(orchestrator, window._capture, spins, real=not args.fake_agents)
+        rows = [f"{('Project' if s.wheel == 'project' else s.wheel.title() if not s.who else s.who + ' skill')}: "
+                f"{s.slice.label}" for s in spins]
+        window.director.stage.show_card("human", "🎡 THE WHEEL OF DESTINY HAS SPOKEN", rows, "#f2c94c", duration=9.0)
     if args.episode:
         _build_episode_on_complete(app, orchestrator, setup.project_dir, quit_after=False,
                                    writers=not args.fake_agents)
@@ -158,7 +168,7 @@ def _start_challenge(orchestrator: Orchestrator, capture, spins, real: bool, say
         say("the cast is reacting to the wheel…")
         reactions = spin_reactions(spins, orchestrator.adapters, progress=say)
     log_spins(capture, spins, reactions)
-    return ChallengeReferee(orchestrator, capture, spins, progress=say)
+    return ChallengeReferee(orchestrator, capture, spins, progress=say, react=real)
 
 
 def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Settings, args, demo: bool,

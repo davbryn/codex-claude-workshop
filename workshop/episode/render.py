@@ -38,7 +38,7 @@ TYPE_RATE = 22.0  # diff lines per second (matches the live monitors)
 
 class EpisodeRenderer:
     def __init__(self, plan: dict, events: list[dict], settings=None, fps: int = 25,
-                 size: tuple[int, int] = (1280, 720), scale: float = 1.5, progress=print):
+                 size: tuple[int, int] = (1280, 720), scale: float = 1.5, progress=print, vertical: bool = False):
         from ..ui.stage import StageWidget
 
         self.plan = plan
@@ -48,6 +48,9 @@ class EpisodeRenderer:
         self.size = size
         self.scale = scale
         self.out_w, self.out_h = int(size[0] * scale), int(size[1] * scale)
+        self.vertical = vertical  # a 1080x1920 Shorts frame around the 16:9 picture
+        self.pipe_w, self.pipe_h = (1080, 1920) if vertical else (self.out_w, self.out_h)
+        self.saying: tuple[str, str, float] | None = None  # (agent, text, until) for the Shorts captions
         self.progress = progress
         self.sfx_volume = getattr(settings, "sfx_volume", 0.8) if settings is not None else 0.8
         self.voices = Voices(settings, progress)
@@ -61,6 +64,8 @@ class EpisodeRenderer:
         self.cam: tuple | None = None  # (agent, zoom, since, push): a close-up on his face; None = the room
         self.subtitle: tuple[str, str] | None = None  # (agent, text) shown on close-ups
         self.hud: dict | None = None  # the challenge status bar, once the rules are in
+        self.music_spans: list[list[float]] = []  # [start, end] of the music bed
+        self.speech_spans: list[tuple[float, float]] = []
         self._speech = None  # (agent, start, duration, envelope, text_len)
         self._typing_until = 0.0
         self._next_key = 0.0
@@ -105,6 +110,10 @@ class EpisodeRenderer:
                 if not m.talking:
                     m.set_talking(True)
                 self.stage.speech_progress(agent, max(1, int(length * (self.t - start) / max(0.1, duration - 0.15))))
+        if self.t < getattr(self, "_fast_until", 0.0):
+            for feed in self.feeds.values():
+                if feed.mode == "editor" and feed.revealed < len(feed.lines):
+                    feed.revealed = min(float(len(feed.lines)), feed.revealed + 1.5 * TYPE_RATE / self.fps)
         if self.t < self._typing_until and self.t >= self._next_key:
             self.sfx("keys", 0.35)
             self._next_key = self.t + 0.13 + 0.12 * self._rng.random()
@@ -155,8 +164,23 @@ class EpisodeRenderer:
     def _write_frame(self) -> None:
         image = self._compose()
         self._last_image = image
-        self._pipe.stdin.write(bytes(image.constBits())[: self.out_w * self.out_h * 4])
+        if self.vertical:
+            image = self._verticalize(image)
+        self._pipe.stdin.write(bytes(image.constBits())[: self.pipe_w * self.pipe_h * 4])
         self.frames += 1
+
+    def _verticalize(self, frame: QImage) -> QImage:
+        from .shorts import paint_short_frame
+
+        canvas = QImage(self.pipe_w, self.pipe_h, QImage.Format.Format_ARGB32)
+        p = QPainter(canvas)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        saying = self.saying if self.saying and self.t <= self.saying[2] else None
+        paint_short_frame(p, (self.pipe_w, self.pipe_h), frame, self.plan, saying)
+        p.end()
+        return canvas
 
     # -- sound ----------------------------------------------------------------------------------
 
@@ -179,7 +203,9 @@ class EpisodeRenderer:
         start = self.t + delay
         if self.voices.available:
             self.audio.append((start, samples, 0.9))
+        self.speech_spans.append((start, start + duration))
         self._speech = (agent, start, duration, env, len(text))
+        self.saying = (agent, text, start + duration + 0.3)
         if bubble:
             self.stage.show_speech(agent, text, mode="speech")
         return duration + delay
@@ -194,7 +220,7 @@ class EpisodeRenderer:
         silent = tmp / "video.mp4"
         self._pipe = subprocess.Popen(
             [ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgra",
-             "-s", f"{self.out_w}x{self.out_h}", "-r", str(self.fps), "-i", "-",
+             "-s", f"{self.pipe_w}x{self.pipe_h}", "-r", str(self.fps), "-i", "-",
              "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", str(silent)],
             stdin=subprocess.PIPE)
         scenes = self.plan["scenes"]
@@ -282,9 +308,12 @@ class EpisodeRenderer:
             self._working(agent, "coding")
             feed.show_diff(FileChange(e["path"], [tuple(x) for x in e["lines"]], e.get("created", False),
                                       e.get("deleted", False)))
-            typing = min(9.0, len(e["lines"]) / TYPE_RATE)
+            fast = scene.get("fast")
+            typing = min(2.6 if fast else 9.0, len(e["lines"]) / (TYPE_RATE * (2.5 if fast else 1)))
+            if fast:
+                self._fast_until = self.t + 0.6 + typing  # the monitor types at montage speed
             self._typing_until = self.t + 0.6 + typing
-            seconds = max(seconds, typing + 2.4)
+            seconds = max(3.0 if fast else seconds, typing + (1.2 if fast else 2.4))
         elif show["type"] == "board":
             self._working(agent, "planning")
             if board is not None:
@@ -410,6 +439,13 @@ class EpisodeRenderer:
         self.sfx("yes")
         st.show_card("complete", "PROJECT COMPLETE", scene.get("lines", []), "#f2c94c",
                      tagline=scene.get("tagline", "Somehow."))
+        if scene.get("short"):
+            self.sfx("fanfare")
+            self.advance(3.2)
+            din.react("highfive", 1.6)
+            gil.react("smug", 1.6)
+            self.advance(1.4)
+            return
         self.advance(0.5)
         self.sfx("fanfare")
         self.advance(2.5)
@@ -582,9 +618,10 @@ class EpisodeRenderer:
         spin = self.events.get(scene["spin"])
         if not spin:
             return
+        self.music(False)
         n = sum(1 for e in self.all_events if e["kind"] == "spin" and e["id"] <= spin["id"])
         title = wheel_title(spin, n)
-        duration = 4.6
+        duration = 3.6
         start = self.t
         state = {"under": None}
 
@@ -604,7 +641,7 @@ class EpisodeRenderer:
             self.advance(1.0 / self.fps)
         result = spin["slices"][spin["result"]]
         self.sfx("blast" if spin["wheel"] in ("language", "limit") else "chime", 0.8)
-        self.advance(2.6 + min(2.0, len(result.get("rule", "")) / 90))
+        self.advance(1.2 if scene.get("short") else 1.8 + min(1.6, len(result.get("rule", "")) / 110))
         self.overlay = None
         # their faces, as it sinks in
         for i, line in enumerate(scene.get("reactions", [])):
@@ -616,6 +653,21 @@ class EpisodeRenderer:
                             "to": "camera" if i == 0 else "other", "frame": "close"}, {"say": 1})
         self._cut(None)
         self._clear_bubbles()
+
+    def _scene_twist_intro(self, scene: dict) -> None:
+        self.music(False)
+        self._cut(None)
+        self._clear_bubbles()
+        start = self.t
+        self.overlay = lambda p, t: paint_violation(p, self.size, t - start, "PLOT TWIST",
+                                                    "Halfway through the build, the wheel spins again", "#6c2bd9")
+        self.sfx("alert")
+        self.stage.shake(6)
+        for a in AGENTS:
+            m = self.stage.models[a]
+            m.react("disturbed" if m.deadpan else "worried", 2.4)
+        self.advance(2.2)
+        self.overlay = None
 
     def _scene_rules(self, scene: dict) -> None:
         start = self.t
@@ -631,6 +683,7 @@ class EpisodeRenderer:
                     "violations": 0, "tests": "-", "turn": 0}
 
     def _scene_turn_card(self, scene: dict) -> None:
+        self.music(True)
         agent = scene["agent"]
         self._cut(None)
         self._clear_bubbles()
@@ -655,6 +708,10 @@ class EpisodeRenderer:
     def _scene_violation(self, scene: dict) -> None:
         check = self.events.get(scene["check"])
         if not check:
+            return
+        self.music(False)
+        if scene.get("twist"):
+            self._twist_fallout(scene, check)
             return
         agent = scene["agent"]
         other = other_of(agent)
@@ -693,6 +750,28 @@ class EpisodeRenderer:
         self.advance(1.6)
         self._cut(None)
 
+    def _twist_fallout(self, scene: dict, check: dict) -> None:
+        """The new rule, applied to code that already exists: nobody's fault, everybody's problem."""
+        v = check["violations"][0]
+        start = self.t
+        heading = f"THE NEW RULE BREAKS {scene['new']} LINE{'S' if scene['new'] != 1 else ''}"
+        detail = f"[{v['rule'].replace('_', ' ')}]  {v['path']}:{v['line']}" if v.get("line") else v["path"]
+        self.overlay = lambda p, t: paint_violation(p, self.size, t - start, heading, detail)
+        self.sfx("alert")
+        self.advance(2.2)
+        self.overlay = None
+        if self.hud is not None:
+            self.hud["violations"] = scene["total"]
+        for who, deadpan_mood, mood in (("Claude", "stare", "outraged"), ("Codex", "stare", "disturbed")):
+            m = self.stage.models[who]
+            self._cut(who, 2.4, 0.08)
+            m.look(0.0, 0.0, 1.6)
+            m.react(deadpan_mood if m.deadpan else mood, 2.0)
+            self.advance(1.2)
+        self.sfx("wahwah", 0.8)
+        self.advance(0.6)
+        self._cut(None)
+
     def _scene_cleared(self, scene: dict) -> None:
         agent = scene["agent"]
         if self.hud is not None:
@@ -706,6 +785,7 @@ class EpisodeRenderer:
         self._cut(None)
 
     def _scene_demo(self, scene: dict) -> None:
+        self.music(True)
         agent = next((e["agent"] for e in reversed(self.all_events) if e["kind"] == "entry"), "Codex")
         feed = self.feeds[agent]
         self._clear_bubbles()
@@ -734,14 +814,46 @@ class EpisodeRenderer:
         if score <= self._thumb_score:
             return
         self._thumb_score = score
-        image = self._compose(bubbles=False)  # a half-typed bubble looks broken on a thumbnail
+        hud, subtitle, self.hud, self.subtitle = self.hud, self.subtitle, None, None
+        image = self._compose(bubbles=False)  # a clean frame: no half-typed bubble, subtitle or status bar
+        self.hud, self.subtitle = hud, subtitle
         self.thumbnail = image
 
     # -- audio ------------------------------------------------------------------------------------
 
+    def music(self, on: bool) -> None:
+        """Start or stop the music bed at the current time."""
+        if on and not (self.music_spans and self.music_spans[-1][1] is None):
+            self.music_spans.append([self.t, None])
+        elif not on and self.music_spans and self.music_spans[-1][1] is None:
+            self.music_spans[-1][1] = self.t
+
+    def _music_track(self, n: int) -> np.ndarray:
+        from .music import bed
+
+        track = np.zeros(n, np.float32)
+        end_of_video = n / SAMPLE_RATE
+        for start, end in self.music_spans:
+            end = end_of_video if end is None else end
+            x = bed(end - start)
+            i = int(start * SAMPLE_RATE)
+            j = min(n, i + len(x))
+            track[i:j] += x[: j - i]
+        if not len(track):
+            return track
+        # duck under speech: down to 30% while anyone talks, with short ramps
+        gain = np.ones(n, np.float32)
+        for a, b in self.speech_spans:
+            i, j = max(0, int((a - 0.1) * SAMPLE_RATE)), min(n, int((b + 0.2) * SAMPLE_RATE))
+            gain[i:j] = 0.3
+        kernel = np.ones(int(0.12 * SAMPLE_RATE), np.float32)
+        kernel /= kernel.sum()
+        gain = np.convolve(gain, kernel, mode="same")
+        return track * gain * 0.16
+
     def _write_audio(self, path: Path) -> None:
         n = int((self.frames / self.fps + 1) * SAMPLE_RATE)
-        mix = np.zeros(n, np.float32)
+        mix = self._music_track(n)
         for t, samples, gain in self.audio:
             start = int(t * SAMPLE_RATE)
             end = min(n, start + len(samples))

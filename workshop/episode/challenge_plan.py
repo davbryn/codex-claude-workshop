@@ -51,7 +51,8 @@ def headline(events: list[dict]) -> dict:
         project = next((label for label, brief in PROJECTS if brief == spun.get("rule")), spun["label"])
     lang = by.get(("language", None), {}).get("label", "")
     limit = by.get(("limit", None), {}).get("label", "")
-    return {"project": project, "language": lang.split(",")[0], "limit": limit,
+    twist = by.get(("twist", None), {}).get("label", "")
+    return {"project": project, "language": lang.split(",")[0].split(" (")[0], "limit": limit, "twist": twist,
             "skills": {a: by.get(("skill", a), {}).get("label", "") for a in AGENTS}}
 
 
@@ -67,29 +68,47 @@ def workaround_lines(entry: dict, limit: int = 150) -> list[str]:
     return sorted(out, key=lambda s: -(score_sentence(s) + 2.5 * bool(rule_words.search(s)) - len(s) / 60))
 
 
+def punch(text: str, other: str) -> float:
+    """How good a real line is for a clip: the bubble scorer, plus aiming at the other guy, minus length."""
+    return score_sentence(text) + (1.5 if other.lower() in text.lower() else 0.0) - max(0, len(text) - 90) / 30
+
+
+def _reaction_lines(spin: dict, reactions: dict) -> list[dict]:
+    """Who reacts to a spin: both for the big ones; for a skill spin, only the funnier of the two."""
+    order = [spin["who"], "Claude" if spin["who"] == "Codex" else "Codex"] if spin.get("who") else ["Claude", "Codex"]
+    lines = [{"speaker": a, "text": reactions[(spin["index"], a)]} for a in order if (spin["index"], a) in reactions]
+    if spin["wheel"] == "skill" and len(lines) == 2:
+        lines = [max(lines, key=lambda x: punch(x["text"], CHARACTER["Claude" if x["speaker"] == "Codex" else "Codex"]))]
+    return lines
+
+
 def plan_challenge(events: list[dict], project_dir: Path | None = None) -> dict:
     h = headline(events)
     spins = spins_of(events)
+    opening = [x for x in spins if x["wheel"] != "twist"]
     reactions = {(e["index"], e["agent"]): e["line"] for e in events if e["kind"] == "spin_reaction"}
-    scenes: list[dict] = [{"kind": "challenge_title", "chapter": "The premise", **h}]
+    scenes: list[dict] = []
+    # -- cold open: the single best real line, then smash to the title
+    candidates = [(punch(line, CHARACTER["Claude" if who == "Codex" else "Codex"]), who, line)
+                  for (_i, who), line in reactions.items()]
+    if candidates:
+        _score, who, line = max(candidates)
+        scenes.append({"kind": "confessional", "speaker": who, "text": line, "label": "", "chapter": "Cold open",
+                       "cold_open": True})
+    scenes.append({"kind": "challenge_title", "chapter": None if scenes else "The premise", **h})
     # -- the wheel
-    for spin in spins:
-        order = list(AGENTS)
-        if spin.get("who"):  # the one it landed on reacts first
-            order = [spin["who"], "Claude" if spin["who"] == "Codex" else "Codex"]
-        else:
-            order = ["Claude", "Codex"]  # Dinesh panics, Gilfoyle buttons
-        lines = [{"speaker": a, "text": reactions[(spin["index"], a)]} for a in order if (spin["index"], a) in reactions]
-        scenes.append({"kind": "wheel", "spin": spin["id"], "reactions": lines,
-                       "chapter": "The Wheel of Destiny" if spin is spins[0] else None})
+    for spin in opening:
+        scenes.append({"kind": "wheel", "spin": spin["id"], "reactions": _reaction_lines(spin, reactions),
+                       "chapter": "The Wheel of Destiny" if spin is opening[0] else None})
     scenes.append({"kind": "rules", **h})
-    # -- the build
-    checks = [e for e in events if e["kind"] == "rules_check"]
+    # -- the build: a montage that stops only for real moments
     prev_count = 0
     counts = {a: 0 for a in AGENTS}
     tests_so_far = ""
+    first_fail = True
     for n, turn in enumerate(_turns(events), 1):
         agent = turn["agent"]
+        other = "Claude" if agent == "Codex" else "Codex"
         evs = turn["events"]
         entry = turn["entry"]
         scenes.append({"kind": "turn_card", "agent": agent, "turn": n, "tests": tests_so_far,
@@ -98,36 +117,46 @@ def plan_challenge(events: list[dict], project_dir: Path | None = None) -> dict:
             if e["kind"] == "tests":
                 tests_so_far = f"{e.get('passed') or 0} ✓" if e.get("ok") else f"{e.get('failed') or '?'} ✗"
         diffs = sorted((e for e in evs if e["kind"] == "diff" and diff_size(e) > 0), key=diff_size, reverse=True)
-        tricks = workaround_lines(entry) if entry else []
         asides = sorted((e for e in evs if e["kind"] == "aside" and e["agent"] == agent),
-                        key=lambda e: -score_sentence(e["text"]))
+                        key=lambda e: -punch(e["text"], CHARACTER[other]))
         if diffs:
             best = asides[0] if asides else None
             scenes.append({"kind": "screen", "agent": agent, "show": {"type": "diff", "events": [diffs[0]["id"]]},
-                           "aside": {"speaker": agent, "text": best["text"], "event": best["id"]} if best else None, "meanwhile": next((e["id"] for e in evs if e["kind"] == "bit"), None)})
-        if tricks:  # the workaround, explained by the guy who did it, to camera
+                           "aside": {"speaker": agent, "text": best["text"], "event": best["id"]} if best else None,
+                           "meanwhile": next((e["id"] for e in evs if e["kind"] == "bit"), None), "fast": True})
+        tricks = workaround_lines(entry) if entry else []
+        if tricks and punch(tricks[0], CHARACTER[other]) > 0:
             scenes.append({"kind": "confessional", "speaker": agent, "text": tricks[0], "label": "THE WORKAROUND"})
         fails = [e for e in evs if e["kind"] == "tests" and not e.get("ok")]
-        if fails:
+        if fails and first_fail:
+            first_fail = False
             cmds = [e for e in evs if e["kind"] == "command" and e["id"] < fails[0]["id"]][-1:]
             scenes.append({"kind": "screen", "agent": agent,
                            "show": {"type": "terminal", "events": [c["id"] for c in cmds] + [fails[0]["id"]]},
                            "aside": None, "meanwhile": None})
-        # the referee checks the moment a turn ends, so the check is among this turn's events
-        check = next((e for e in reversed(evs) if e["kind"] == "rules_check"), None)
-        if check is not None:
-            if check["count"] > prev_count and check["violations"]:
-                counts[agent] += check["count"] - prev_count
-                scenes.append({"kind": "violation", "agent": agent, "check": check["id"],
-                               "new": check["count"] - prev_count, "total": check["count"]})
-            elif prev_count and check["count"] < prev_count:
-                scenes.append({"kind": "cleared", "agent": agent, "fixed": prev_count - check["count"],
-                               "total": check["count"]})
-            prev_count = check["count"]
+        # the referee checks when a turn ends; a twist spin (and a re-check under the new rules) may follow
+        for e in evs:
+            if e["kind"] == "rules_check" and not e.get("after_twist"):
+                if e["count"] > prev_count and e["violations"]:
+                    counts[agent] += e["count"] - prev_count
+                    scenes.append({"kind": "violation", "agent": agent, "check": e["id"],
+                                   "new": e["count"] - prev_count, "total": e["count"]})
+                elif prev_count and e["count"] < prev_count:
+                    scenes.append({"kind": "cleared", "agent": agent, "fixed": prev_count - e["count"],
+                                   "total": e["count"]})
+                prev_count = e["count"]
+            elif e["kind"] == "spin" and e["wheel"] == "twist":
+                scenes.append({"kind": "twist_intro", "chapter": "THE TWIST"})
+                scenes.append({"kind": "wheel", "spin": e["id"], "reactions": _reaction_lines(e, reactions)})
+            elif e["kind"] == "rules_check" and e.get("after_twist"):
+                if e["count"] > prev_count and e["violations"]:
+                    scenes.append({"kind": "violation", "agent": None, "check": e["id"], "twist": True,
+                                   "new": e["count"] - prev_count, "total": e["count"]})
+                prev_count = e["count"]
         if entry:
             r = classify_entry(_entry_turn(entry))
-            text = bubble_excerpt(entry.get("content", ""), 160)
-            if text and text not in tricks:
+            text = bubble_excerpt(entry.get("content", ""), 150)
+            if text and text not in tricks and (r.moment() or punch(text, CHARACTER[other]) >= 3):
                 scenes.append({"kind": "line", "speaker": agent, "text": text, "speaker_state": r.primary_state(),
                                "listener": r.listener_state(True), "moment": r.moment(), "handoff": None,
                                "event": entry["id"]})
@@ -135,18 +164,19 @@ def plan_challenge(events: list[dict], project_dir: Path | None = None) -> dict:
     demo = read_demo(project_dir) if project_dir else []
     if demo:
         scenes.append({"kind": "demo", "lines": demo, "chapter": "The demo"})
+    checks = [e for e in events if e["kind"] == "rules_check"]
     final = checks[-1]["count"] if checks else None
     lines = finale_lines(events)
-    lines.insert(0, f"{h['project']} · {h['language']} · {h['limit']}")
+    lines.insert(0, f"{h['project']} · {h['language']} · {h['limit']}" + (f" · {h['twist']}" if h.get("twist") else ""))
     if final is not None:
-        lines.append("Rules violations caused: " + " · ".join(f"{CHARACTER[a]} {counts[a]}" for a in AGENTS))
+        lines.append("Rule breaks caused: " + " · ".join(f"{CHARACTER[a]} {counts[a]}" for a in AGENTS))
         lines.append("Final rules check: CLEAN ✓" if final == 0 else f"Final rules check: {final} still broken 🚨")
     scenes.append({"kind": "finale", "lines": lines, "tagline": "Somehow." if not final else "Technically.",
                    "chapter": "The verdict"})
     title = f"{h['project']} in {h['language']}. {h['limit']}."
     return {"title": title, "project": h["project"], "logline": _logline(h), "format": "challenge",
-            "disclaimer": "A real, unscripted session: every line is the agents' own; the code, rules checks and "
-                          "results are real.", "scenes": scenes}
+            "headline": h, "disclaimer": "A real, unscripted session: every line is the agents' own; the code, "
+                                         "rules checks and results are real.", "scenes": scenes}
 
 
 def _logline(h: dict) -> str:
@@ -166,3 +196,48 @@ def read_demo(project_dir: Path, max_lines: int = 22) -> list[str]:
     body = "\n".join(fenced) if fenced else text
     lines = [ln.rstrip() for ln in body.splitlines() if ln.strip()]
     return lines[:max_lines]
+
+
+def plan_short(plan: dict, events: list[dict]) -> dict:
+    """A vertical, under-a-minute cut of a challenge episode: the hook, the two spins that matter, the twist or the
+    best disaster, the thing working, the verdict."""
+    by_id = {e["id"]: e for e in events}
+    scenes = plan["scenes"]
+    out: list[dict] = []
+
+    def wheel_for(kind: str) -> dict | None:
+        for sc in scenes:
+            if sc["kind"] == "wheel" and by_id.get(sc["spin"], {}).get("wheel") == kind:
+                best = sc["reactions"][:1]
+                if len(sc["reactions"]) > 1:
+                    best = [max(sc["reactions"], key=lambda r: punch(r["text"], CHARACTER[
+                        "Claude" if r["speaker"] == "Codex" else "Codex"]))]
+                return dict(sc, reactions=best, short=True)
+        return None
+
+    cold = next((sc for sc in scenes if sc.get("cold_open")), None)
+    if cold:
+        out.append(cold)
+    for kind in ("language", "limit"):
+        w = wheel_for(kind)
+        if w:
+            out.append(w)
+    twist = wheel_for("twist")
+    if twist:
+        out.append({"kind": "twist_intro"})
+        out.append(twist)
+        fallout = next((sc for sc in scenes if sc["kind"] == "violation" and sc.get("twist")), None)
+        if fallout:
+            out.append(fallout)
+    else:
+        drama = next((sc for sc in scenes if sc["kind"] == "violation"), None) or \
+            next((sc for sc in scenes if sc.get("label") == "THE WORKAROUND"), None)
+        if drama:
+            out.append(drama)
+    demo = next((sc for sc in scenes if sc["kind"] == "demo"), None)
+    if demo:
+        out.append(dict(demo, lines=demo["lines"][:7]))
+    finale = scenes[-1]
+    out.append(dict(finale, short=True, lines=[x for x in finale["lines"] if "rules check" in x.lower()
+                                                 or "tests passing" in x.lower()][:2]))
+    return dict(plan, scenes=out, vertical=True)

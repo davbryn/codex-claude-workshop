@@ -60,7 +60,7 @@ def make_plan(project_dir: Path, progress=print, writers: bool = False, settings
 
 
 def build_episode(project_dir: Path, progress=print, plan: dict | None = None, settings=None,
-                  writers: bool = False) -> Path:
+                  writers: bool = False, shorts: bool = True) -> Path:
     from PySide6.QtWidgets import QApplication
 
     from .render import EpisodeRenderer
@@ -83,13 +83,30 @@ def build_episode(project_dir: Path, progress=print, plan: dict | None = None, s
     (out / "title.txt").write_text(title + "\n", encoding="utf-8")
     (out / "description.md").write_text(description(plan, renderer.chapters, events), encoding="utf-8")
     if renderer.thumbnail is not None:
-        make_thumbnail(renderer.thumbnail, plan).save(str(out / "thumbnail.png"))
+        if plan.get("format") == "challenge":
+            challenge_thumbnail(renderer.thumbnail, plan, events).save(str(out / "thumbnail.png"))
+        else:
+            make_thumbnail(renderer.thumbnail, plan).save(str(out / "thumbnail.png"))
+    if plan.get("format") == "challenge" and shorts:
+        from .challenge_plan import plan_short
+
+        progress("rendering the Short (vertical, under a minute)…")
+        short = plan_short(plan, events)
+        vr = EpisodeRenderer(short, events, settings=settings, progress=lambda *_: None, vertical=True)
+        vr.render(out / "episode_short.mp4")
+        progress(f"Short: {vr.frames / vr.fps:.0f}s")
+        (out / "short_title.txt").write_text(short_title(plan) + "\n", encoding="utf-8")
     return video
 
 
 def youtube_title(plan: dict) -> str:
     if plan.get("format") == "challenge":
-        title = f"AI vs AI: {plan['title'].rstrip('.')} | Wheel of Destiny"
+        h = plan.get("headline") or {}
+        title = f"I Made Two AIs Build {h.get('project', plan['project'])} in {h.get('language', '')} With " \
+                f"{h.get('limit', '')}"
+        if h.get("twist"):
+            title += f". Then the Wheel Added {h['twist']}"
+        title = title.replace("With No ", "With NO ")
     elif plan.get("project"):  # a written episode has its own title
         title = f"{plan['title']} | Gilfoyle & Dinesh Build {_title_case(plan['project'])}"
     else:
@@ -169,5 +186,52 @@ def make_thumbnail(frame, plan: dict):
         p.setFont(sub)
         p.setPen(QColor("#ffffff"))
         p.drawText(QRectF(42, 196, 1200, 44), Qt.AlignmentFlag.AlignLeft, plan["project"].upper()[:60])
+    p.end()
+    return image
+
+
+def short_title(plan: dict) -> str:
+    h = plan.get("headline") or {}
+    return f"AI vs AI: {h.get('project', '')} in {h.get('language', '')}, {h.get('limit', '')} #shorts #coding #ai"
+
+
+def challenge_thumbnail(frame, plan: dict, events: list[dict]):
+    """The wheel, the most dramatic real face, and three words."""
+    from PySide6.QtCore import QRectF, Qt
+    from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
+
+    from .shorts import _outlined
+    from .wheel_paint import paint_wheel, wheel_angle
+
+    image = QImage(1280, 720, QImage.Format.Format_RGB32)
+    p = QPainter(image)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    p.fillRect(QRectF(0, 0, 1280, 720), QColor("#1b1030"))
+    spin = next((e for e in events if e["kind"] == "spin" and e["wheel"] == "limit"), None)
+    if spin:
+        angle, _ = wheel_angle(spin, 1.0, 1.0)
+        p.save()
+        p.translate(-330, 40)
+        paint_wheel(p, (1280, 720), spin, angle, None, "")
+        p.restore()
+    # the face: the middle of a close-up frame, on the right
+    src = frame.scaled(1280, 720, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    src.setDevicePixelRatio(1.0)
+    crop = QRectF(1280 * 0.24, 0, 1280 * 0.52, 720)
+    clip = QPainterPath()
+    clip.addRoundedRect(QRectF(560, 70, 690, 620), 30, 30)
+    p.save()
+    p.setClipPath(clip)
+    p.drawImage(QRectF(560, 70, 690, 620), src, crop)
+    p.restore()
+    p.setPen(QPen(QColor("#f2c94c"), 8))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(QRectF(560, 70, 690, 620), 30, 30)
+    h = plan.get("headline") or {}
+    lang = (h.get("language") or "").upper()
+    _outlined(p, QRectF(20, 16, 640, 250), lang, 110 if len(lang) <= 8 else 92, "#ffffff")
+    _outlined(p, QRectF(20, 520, 700, 190), (h.get("limit") or "").upper() + "?!", 96, "#f2c94c")
     p.end()
     return image

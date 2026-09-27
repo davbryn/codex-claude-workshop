@@ -41,32 +41,72 @@ def spin_reactions(spins: list[challenge.Spin], adapters: dict, progress=print, 
 class ChallengeReferee:
     """Adds the rules and the latest rules check to every turn's prompt, and logs each check."""
 
-    def __init__(self, orchestrator, capture, spins: list[challenge.Spin], progress=print):
+    def __init__(self, orchestrator, capture, spins: list[challenge.Spin], progress=print, twist_after: int = 2,
+                 react: bool = True, rng=None):
         self.o = orchestrator
         self.capture = capture
-        self.spins = spins
+        self.spins = list(spins)
         self.progress = progress
-        self.rules = challenge.rules_text(spins)
+        self.rules = challenge.rules_text(self.spins)
         self.last_report = "RULES CHECK: nothing written yet."
+        self.turns = 0
+        self.twist_after = twist_after  # spin the Twist Wheel after this many turns (0 = never)
+        self.react = react
+        self.rng = rng
+        self.twist_note = ""
         base = orchestrator.prompt_theatre
 
         def theatre(agent: str, text: str) -> str:
-            parts = [base(agent, text) if base else "", self.rules, self.last_report]
+            parts = [base(agent, text) if base else "", self.twist_note, self.rules, self.last_report]
             return "\n\n".join(p for p in parts if p)
 
         orchestrator.prompt_theatre = theatre
         orchestrator.turn_finished.connect(self._on_turn_finished)
 
     def _on_turn_finished(self, agent: str, _code: int) -> None:
+        self.turns += 1
+        self._check(agent)
+        if self.twist_after and self.turns == self.twist_after:
+            try:
+                self._twist(agent)
+            except Exception as exc:  # a failed twist must never break the workshop
+                self.progress(f"twist failed: {exc}")
+
+    def _check(self, agent: str, after_twist: bool = False) -> None:
         try:
             violations = challenge.check(self.o.project_dir, self.spins)
         except Exception as exc:  # the referee must never break the workshop
             self.progress(f"rules check failed: {exc}")
             return
         self.last_report = challenge.report(violations, self.spins)
-        self.capture.log.add("rules_check", agent=agent, count=len(violations),
+        self.capture.log.add("rules_check", agent=agent, count=len(violations), after_twist=after_twist,
                              violations=[v.as_dict() for v in violations[:30]])
-        self.progress(f"rules check after {agent}: {len(violations)} violation(s)")
+        self.progress(f"rules check after {agent}{' (new rules)' if after_twist else ''}: "
+                      f"{len(violations)} violation(s)")
+
+    def _twist(self, agent: str) -> None:
+        """Halfway through, the Twist Wheel: a second limitation, a request from Jared, or a skill swap."""
+        twist = challenge.spin_twist(self.spins, self.rng)
+        self.progress(f"TWIST WHEEL: {twist.slice.label}")
+        index = len(self.spins)
+        self.spins.append(twist)
+        reactions = {}
+        if self.react:
+            reactions = spin_reactions([twist], self.o.adapters, progress=self.progress)
+        self.capture.log.add("spin", index=index, **twist.as_event())
+        for who in AGENTS:
+            line = reactions.get(who, {}).get(0)
+            if line:
+                self.capture.log.add("spin_reaction", index=index, agent=who, line=line)
+        self.rules = challenge.rules_text(self.spins)
+        self.twist_note = (f"*** THE TWIST WHEEL HAS BEEN SPUN, halfway through the build. It landed on: "
+                           f"{twist.slice.label}. {twist.slice.rule} The rules below are updated. Adapt the "
+                           "existing code; say how in your entry. ***")
+        try:
+            (Path(self.o.project_dir) / "CHALLENGE.md").write_text(self.rules + "\n", encoding="utf-8")
+        except OSError:
+            pass
+        self._check(agent, after_twist=True)
 
 
 def log_spins(capture, spins: list[challenge.Spin], reactions: dict) -> None:

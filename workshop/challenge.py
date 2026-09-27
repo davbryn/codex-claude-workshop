@@ -81,6 +81,21 @@ LIMITS = [
           "Build what you need.", "#6f9dff"),
 ]
 
+JARED = [  # management's mid-build feature requests (Jared means well)
+    Slice("jared:blockchain", "Put It On The Blockchain", "Jared read an article. Every change the program makes must "
+          "be recorded in a tamper-evident chain: each record carries a checksum of the previous one. No libraries "
+          "beyond what the rules already allow.", "#f2994a"),
+    Slice("jared:klingon", "Klingon Mode", "Jared's nephew is into Klingon. Add a Klingon mode (a flag or option) that "
+          "translates every message the program prints. Honourable approximations are fine.", "#eb5757"),
+    Slice("jared:mascot", "A Mascot", "Jared wants the product to have a face. The program greets the user with an ASCII "
+          "art mascot and the mascot reacts to how things are going.", "#7bd88f"),
+    Slice("jared:easter", "An Easter Egg", "Jared wants delight. Hide an easter egg in the program: a secret input that "
+          "does something surprising and wholesome. Document how to find it in DEMO.md.", "#bb6bd9"),
+    Slice("jared:accessible", "Screen-Reader Friendly", "Jared attended a talk. Every screen of output must also make "
+          "sense read aloud: no meaning carried only by symbols, spacing or colour.", "#56ccf2"),
+]
+SWAP = Slice("swap", "SKILL SWAP", "Gilfoyle and Dinesh swap skill levels for the rest of the build.", "#ffffff")
+
 PROJECTS = [  # (label on the wheel, the brief)
     ("Habit Tracker", "a command-line habit tracker: add habits, check them off for today, show current and best "
                       "streaks; data in a file"),
@@ -148,20 +163,80 @@ def spin_all(rng: random.Random | None = None, project: bool = False) -> list[Sp
     spins.append(spin("skill", "Codex", SKILLS))
     spins.append(spin("skill", "Claude", SKILLS))
     spins.append(spin("language", None, language_slices()))
-    spins.append(spin("limit", None, LIMITS))
+    lang = spins[-1].slice.key
+    # the whole wheel is shown, but a limitation that costs nothing in this language can't win
+    allowed = [i for i, x in enumerate(LIMITS) if not trivial(x.key, lang)]
+    result = rng.choice(allowed)
+    misses = rng.sample([i for i in range(len(LIMITS)) if i != result], k=2)
+    spins.append(Spin("limit", None, LIMITS, result, misses))
     return spins
+
+
+def trivial(limit: str, language: str) -> bool:
+    """Limitations that cost nothing in a language (Batch and awk have nothing to import)."""
+    return limit == "no_imports" and language in ("batch", "awk")
+
+
+def twist_slices(spins: list[Spin]) -> list[Slice]:
+    """The Twist Wheel: a second limitation, one of Jared's feature requests, or a skill swap."""
+    taken = {s.slice.key for s in spins if s.wheel in ("limit", "twist")}
+    lang = next((s.slice.key for s in spins if s.wheel == "language"), "")
+    limits = [x for x in LIMITS if x.key not in taken and not trivial(x.key, lang)]
+    extra = [Slice("limit:" + x.key, x.label, x.rule, x.colour) for x in limits[:4]]
+    return extra + JARED + [SWAP]
+
+
+def spin_twist(spins: list[Spin], rng: random.Random | None = None) -> Spin:
+    rng = rng or random.Random()
+    slices = twist_slices(spins)
+    result = rng.randrange(len(slices))
+    misses = rng.sample([i for i in range(len(slices)) if i != result], k=min(2, len(slices) - 1))
+    return Spin("twist", None, slices, result, misses)
+
+
+def limit_keys(spins) -> list[str]:
+    """Every limitation in force: the original one and any added by a twist."""
+    spins = [x.as_event() if isinstance(x, Spin) else x for x in spins]
+    keys = []
+    for x in spins:
+        key = x["slices"][x["result"]]["key"]
+        if x["wheel"] == "limit":
+            keys.append(key)
+        elif x["wheel"] == "twist" and key.startswith("limit:"):
+            keys.append(key.split(":", 1)[1])
+    return keys
+
+
+def skills(spins: list[Spin]) -> dict[str, Slice]:
+    """Each agent's skill level, after any swap."""
+    by = {x.who: x.slice for x in spins if x.wheel == "skill"}
+    if any(x.wheel == "twist" and x.slice.key == "swap" for x in spins):
+        by = {"Codex": by.get("Claude"), "Claude": by.get("Codex")}
+    return by
 
 
 def rules_text(spins: list[Spin]) -> str:
     by = {(s.wheel, s.who): s.slice for s in spins}
     lang = by[("language", None)]
     limit = by[("limit", None)]
+    skill = skills(spins)
     rows = [
         "THE WHEEL OF DESTINY HAS SPOKEN. These are the rules for this build:",
         f"- LANGUAGE: {lang.label}. {lang.rule}. No other languages, tests included.",
         f"- LIMITATION: {limit.label}. {limit.rule}",
-        f"- Gilfoyle (Codex) SKILL LEVEL: {by[('skill', 'Codex')].label}. {by[('skill', 'Codex')].rule}",
-        f"- Dinesh (Claude) SKILL LEVEL: {by[('skill', 'Claude')].label}. {by[('skill', 'Claude')].rule}",
+    ]
+    for twist in (x for x in spins if x.wheel == "twist"):
+        t = twist.slice
+        if t.key.startswith("limit:"):
+            rows.append(f"- TWIST, SECOND LIMITATION (from now on): {t.label}. {t.rule}")
+        elif t.key.startswith("jared:"):
+            rows.append(f"- TWIST, JARED'S FEATURE REQUEST (mandatory, must be done before completion): {t.label}. "
+                        f"{t.rule}")
+        elif t.key == "swap":
+            rows.append("- TWIST: SKILL SWAP. Your skill levels have been swapped for the rest of the build.")
+    rows += [
+        f"- Gilfoyle (Codex) SKILL LEVEL: {skill['Codex'].label}. {skill['Codex'].rule}",
+        f"- Dinesh (Claude) SKILL LEVEL: {skill['Claude'].label}. {skill['Claude'].rule}",
         "- The rules are checked automatically after every turn. Violations are reported to both of you.",
         "- Clever workarounds are encouraged. When the rules force one, say what you did in your entry.",
         "- Before proposing completion, write DEMO.md: a short, REAL terminal session (commands you actually ran and "
@@ -258,12 +333,13 @@ def _check_couplets(rel: str, comments: list[tuple[int, str, str]]) -> list[Viol
 
 
 def check(project_dir: Path, spins: list[Spin] | list[dict]) -> list[Violation]:
-    """Check the project's code against the spun limitation (and language). Checkable rules only."""
+    """Check the project's code against every limitation in force (and the language). Checkable rules only."""
     spins = [s.as_event() if isinstance(s, Spin) else s for s in spins]
     lang_key = next(s["slices"][s["result"]]["key"] for s in spins if s["wheel"] == "language")
-    limit = next(s["slices"][s["result"]]["key"] for s in spins if s["wheel"] == "limit")
+    limits = limit_keys(spins)
     lang = next(lang for lang in LANGUAGES if lang[0] == lang_key)
     exts, comment = lang[3], lang[4]
+    flags = re.I if lang_key in ("vbscript", "batch", "powershell") else 0
     project = Path(project_dir)
     found: list[Violation] = []
     # the language rule: code in other languages doesn't count as a workaround
@@ -280,35 +356,42 @@ def check(project_dir: Path, spins: list[Spin] | list[dict]) -> list[Violation]:
         comments: list[tuple[int, str, str]] = []
         for n, raw in enumerate(lines, 1):
             code, note = _strip_comment(raw, comment)
-            code_nostr = _STRING.sub('""', code) if limit != "no_digits" else code
             if raw.strip():
                 total += 1
-            if limit in _KEYWORDS and re.search(_KEYWORDS[limit], code_nostr, re.I if lang_key in ("vbscript", "batch", "powershell") else 0):
-                found.append(Violation(limit, rel, n, raw.strip()))
-            elif limit == "no_digits" and re.search(r"[0-9]", raw):
-                found.append(Violation(limit, rel, n, raw.strip()))
-            elif limit == "short_lines" and len(raw.rstrip()) > 40:
-                found.append(Violation(limit, rel, n, raw.strip()))
-            elif limit == "shouting":
-                for m in _STRING.finditer(code):
-                    s = m.group(1) if m.group(1) is not None else m.group(2)
-                    if s and s != s.upper():
-                        found.append(Violation(limit, rel, n, raw.strip()))
-                        break
-            elif limit == "no_vowels":
-                for m in _DEF_NAMES.finditer(code):
-                    name = next(g for g in m.groups() if g)
-                    if re.search(r"[aeiouAEIOU]", name) and name not in ("self", "args", "main", "__init__", "__name__"):
-                        found.append(Violation(limit, rel, n, raw.strip()))
-                        break
-            elif limit == "rhyme" and note.strip():
+            for limit in limits:
+                if _breaks(limit, raw, code, flags):
+                    found.append(Violation(limit, rel, n, raw.strip()))
+                    break
+            if "rhyme" in limits and note.strip():
                 comments.append((n, note, raw.strip()))
-        if limit == "rhyme":
+        if "rhyme" in limits:
             found.extend(_check_couplets(rel, comments))
-            comments = []
-    if limit == "tiny" and total > 100:
-        found.append(Violation(limit, "(whole project)", 0, f"{total} lines of code"))
+    if "tiny" in limits and total > 100:
+        found.append(Violation("tiny", "(whole project)", 0, f"{total} lines of code"))
     return found[:60]
+
+
+def _breaks(limit: str, raw: str, code: str, flags: int) -> bool:
+    """Does this line break ``limit``? (Rhyme and the total line count are checked per file / per project.)"""
+    code_nostr = _STRING.sub('""', code)
+    if limit in _KEYWORDS:
+        return bool(re.search(_KEYWORDS[limit], code_nostr, flags))
+    if limit == "no_digits":
+        return bool(re.search(r"[0-9]", raw))
+    if limit == "short_lines":
+        return len(raw.rstrip()) > 40
+    if limit == "shouting":
+        for m in _STRING.finditer(code):
+            text = m.group(1) if m.group(1) is not None else m.group(2)
+            if text and text != text.upper():
+                return True
+        return False
+    if limit == "no_vowels":
+        for m in _DEF_NAMES.finditer(code):
+            name = next(g for g in m.groups() if g)
+            if re.search(r"[aeiouAEIOU]", name) and name not in ("self", "args", "main", "__init__", "__name__"):
+                return True
+    return False
 
 
 def report(violations: list[Violation], spins) -> str:

@@ -117,15 +117,93 @@ def test_challenge_plan_tells_the_story(tmp_path):
     (tmp_path / "DEMO.md").write_text("```\n> python game.py\nYou win!\n```\n", encoding="utf-8")
     plan = plan_challenge(_challenge_events(tmp_path), tmp_path)
     kinds = [s["kind"] for s in plan["scenes"]]
-    assert kinds[0] == "challenge_title" and kinds.count("wheel") == 5 and "rules" in kinds
+    assert kinds[:2] == ["confessional", "challenge_title"] and plan["scenes"][0]["cold_open"]
+    assert kinds.count("wheel") == 5 and "rules" in kinds
     assert kinds[-2:] == ["demo", "finale"]
-    wheel = plan["scenes"][1]
+    wheel = plan["scenes"][2]
     assert [r["speaker"] for r in wheel["reactions"]] == ["Claude", "Codex"]  # Dinesh panics, Gilfoyle buttons
     violation = next(s for s in plan["scenes"] if s["kind"] == "violation")
     assert violation["agent"] == "Claude" and violation["new"] == 2
     cleared = next(s for s in plan["scenes"] if s["kind"] == "cleared")
     assert cleared["agent"] == "Codex" and cleared["fixed"] == 2
-    trick = next(s for s in plan["scenes"] if s["kind"] == "confessional")
+    trick = next(s for s in plan["scenes"] if s.get("label") == "THE WORKAROUND")
     assert "recursion is a workaround" in trick["text"]
     assert any("CLEAN" in line for line in plan["scenes"][-1]["lines"])
     assert plan["format"] == "challenge" and "Wheel of Destiny" in plan["logline"]
+
+
+def test_twist_adds_a_limitation_that_the_checker_enforces(tmp_path):
+    spins = c.spin_all(random.Random(3))
+    spins[-1] = c.Spin("limit", None, c.LIMITS, [x.key for x in c.LIMITS].index("no_loops"))
+    lang = [s for s in spins if s.wheel == "language"][0]
+    lang.slices[:] = [c.Slice("python", "Python", "")]
+    lang.result = 0
+    twist_slices = c.twist_slices(spins)
+    assert all(x.key != "limit:no_loops" for x in twist_slices)
+    assert any(x.key.startswith("jared:") for x in twist_slices) and twist_slices[-1].key == "swap"
+    digits = next(i for i, x in enumerate(twist_slices) if x.key == "limit:no_digits")
+    twist = c.Spin("twist", None, twist_slices, digits)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    assert c.check(tmp_path, spins) == []
+    assert [v.rule for v in c.check(tmp_path, spins + [twist])] == ["no_digits"]
+    assert "SECOND LIMITATION" in c.rules_text(spins + [twist])
+
+
+def test_skill_swap_and_jared():
+    spins = c.spin_all(random.Random(5))
+    before = c.skills(spins)
+    swapped = c.skills(spins + [c.Spin("twist", None, [c.SWAP], 0)])
+    assert swapped["Codex"] == before["Claude"] and swapped["Claude"] == before["Codex"]
+    jared = c.Spin("twist", None, c.JARED, 1)
+    assert "JARED'S FEATURE REQUEST" in c.rules_text(spins + [jared])
+
+
+def test_trivial_limits_never_win():
+    for seed in range(60):
+        spins = c.spin_all(random.Random(seed))
+        lang = [s for s in spins if s.wheel == "language"][0].slice.key
+        assert not c.trivial(spins[-1].slice.key, lang)
+
+
+def test_music_bed_is_quiet_tileable_and_faded():
+    import numpy as np
+
+    from workshop.episode.music import RATE, bed
+
+    x = bed(7.5)
+    assert len(x) == int(7.5 * RATE) and float(np.abs(x).max()) <= 0.91
+    assert abs(float(x[0])) < 1e-3 and abs(float(x[-1])) < 1e-2  # fades in and out
+    assert len(bed(0)) == 0
+
+
+def test_short_plan_hook_spins_twist_demo_verdict(tmp_path):
+    from workshop.episode.capture import EventLog, read_events
+    from workshop.episode.challenge_plan import plan_challenge, plan_short
+
+    events = _challenge_events(tmp_path)
+    log = EventLog(tmp_path / "events.jsonl")
+    spins = [e for e in events if e["kind"] == "spin"]
+    twist = c.Spin("twist", None, c.JARED, 0)
+    log.add("spin", index=len(spins), **twist.as_event())
+    log.add("spin_reaction", index=len(spins), agent="Claude", line="Blockchain?! Jared, NO.")
+    (tmp_path / "DEMO.md").write_text("> run\n" + "\n".join(f"line {i}" for i in range(20)), encoding="utf-8")
+    events = read_events(tmp_path / "events.jsonl")
+    full = plan_challenge(events, tmp_path)
+    short = plan_short(full, events)
+    kinds = [s["kind"] for s in short["scenes"]]
+    assert kinds[0] == "confessional" and kinds[-1] == "finale" and short["vertical"]
+    assert kinds.count("wheel") == 3 and "twist_intro" in kinds  # language, limit, twist
+    assert all(len(s["reactions"]) <= 1 for s in short["scenes"] if s["kind"] == "wheel")
+    assert len(next(s for s in short["scenes"] if s["kind"] == "demo")["lines"]) <= 7
+    assert full["headline"]["twist"] == "Put It On The Blockchain"
+
+
+def test_viral_titles():
+    from workshop.episode.build import short_title, youtube_title
+
+    plan = {"format": "challenge", "project": "Hangman", "title": "x",
+            "headline": {"project": "Hangman", "language": "Windows Batch", "limit": "No Loops", "twist": ""}}
+    assert youtube_title(plan) == "I Made Two AIs Build Hangman in Windows Batch With NO Loops"
+    plan["headline"]["twist"] = "Klingon Mode"
+    assert youtube_title(plan).endswith("Then the Wheel Added Klingon Mode")
+    assert "#shorts" in short_title(plan)
