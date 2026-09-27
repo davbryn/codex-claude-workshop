@@ -130,6 +130,7 @@ class Director(QObject):
         self._mutters: deque = deque(maxlen=4)
         self._muttering: str | None = None
         self._mutter_live = False
+        self._mutter_token = None
         # the idle one contributes to the comedy asynchronously (a small side call to his own CLI)
         self.side_bits = True
         adapters = getattr(orchestrator, "adapters", {}) or {}
@@ -695,10 +696,17 @@ class Director(QObject):
         if not spoken:  # silent: animate the line for a reading-length beat
             m.set_talking(True)
             QTimer.singleShot(int(max(1.8, min(6.0, len(text) / 15)) * 1000), self._end_mutter)
+        else:
+            # safety net: if the audio device stalls (sleep, unplugged headset) "finished" may never come
+            token = object()
+            self._mutter_token = token
+            QTimer.singleShot(int((len(text) / 9 + 8) * 1000),
+                              lambda t=token: self._end_mutter() if self._mutter_token is t and self._muttering else None)
 
     def _end_mutter(self) -> None:
         agent, self._muttering = self._muttering, None
         self._mutter_live = False
+        self._mutter_token = None
         if agent and self.current is None:
             self.stage.models[agent].set_talking(False)
         if agent:

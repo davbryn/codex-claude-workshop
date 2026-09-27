@@ -152,3 +152,31 @@ def test_mangled_em_dash_from_windows_tools_still_parses():
 def test_html_entities_in_asides_are_decoded():
     board = parse("## Asides\n- Dinesh: `md2html.py doc.md &gt; doc.html` crashed on a checkmark.\n")
     assert board.asides == [("Dinesh", "md2html.py doc.md > doc.html crashed on a checkmark.")]
+
+
+def test_a_stalled_audio_device_cannot_leave_an_aside_talking_forever(qapp, wait, tmp_path):
+    from workshop.agents.fake import FakeAdapter
+    from workshop.orchestrator import Orchestrator
+    from workshop.project import ensure_protocol_file, start_new_conversation
+    from workshop.theatre.director import Director
+    from workshop.theatre.sfx import SoundEffects
+    from workshop.theatre.speech import SpeechEngine
+    from workshop.ui.stage import StageWidget
+
+    class Stalled(SpeechEngine):  # accepts the line, then never starts or finishes (device asleep)
+        def available(self):
+            return True
+
+        def speak(self, agent, text):
+            return True
+
+    ensure_protocol_file(tmp_path)
+    start_new_conversation(tmp_path, "x", "Codex")
+    o = Orchestrator(tmp_path, {a: FakeAdapter(a) for a in ("Codex", "Claude")}, {})
+    d = Director(o, StageWidget(), Stalled(), SoundEffects(False))
+    d.on_turn_started("Codex", 1)
+    (tmp_path / "KANBAN.md").write_text(SEED.replace("## Asides\n", "## Asides\n- Gilfoyle: ok.\n"), encoding="utf-8")
+    d._poll_board()
+    assert d._muttering == "Codex"
+    assert wait(lambda: d._muttering is None, timeout=12)  # the safety net ended it
+    d.shutdown()

@@ -109,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     # If the window ever stops responding, record exactly where (see .workshop/logs/freeze-*.log).
     watchdog = FreezeWatchdog(setup.project_dir / ".workshop" / "logs", parent=window)
     app.aboutToQuit.connect(watchdog.stop)
+    app._freeze_watchdog = watchdog
     if args.record:
         _start_recording(app, window, orchestrator, Path(args.record))
     orchestrator.start()
@@ -132,6 +133,9 @@ def _start_recording(app: QApplication, window: MainWindow, orchestrator: Orches
         if state["done"]:
             return
         state["done"] = True
+        watchdog = getattr(app, "_freeze_watchdog", None)
+        if watchdog is not None:
+            watchdog.stop()  # muxing the video blocks the UI on purpose; that isn't a freeze
         path = recorder.finish()
         print(f"Saved {path} ({recorder.frames / recorder.fps:.0f}s)", flush=True)
         orchestrator.shutdown()
