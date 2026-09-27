@@ -84,7 +84,10 @@ def build_episode(project_dir: Path, progress=print, plan: dict | None = None, s
     (out / "description.md").write_text(description(plan, renderer.chapters, events), encoding="utf-8")
     if renderer.thumbnail is not None:
         if plan.get("format") == "challenge":
-            challenge_thumbnail(renderer.thumbnail, plan, events).save(str(out / "thumbnail.png"))
+            face = renderer.thumbnail
+            if renderer._thumb_score < 6:  # no big reaction shot in this episode: pose one
+                face = EpisodeRenderer(plan, events, settings=settings, progress=lambda *_: None).face_still()
+            challenge_thumbnail(face, plan, events).save(str(out / "thumbnail.png"))
         else:
             make_thumbnail(renderer.thumbnail, plan).save(str(out / "thumbnail.png"))
     if plan.get("format") == "challenge" and shorts:

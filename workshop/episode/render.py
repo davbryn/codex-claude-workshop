@@ -809,6 +809,19 @@ class EpisodeRenderer:
         self._typing_until = 0.0
         self._cut(None)
 
+    def face_still(self, agent: str = "Claude", mood: str = "outraged") -> QImage:
+        """A posed close-up (no video written): for thumbnails when the episode had no big reaction shot."""
+        self.hud, self.subtitle, self.overlay = None, None, None
+        self._clear_bubbles()
+        m = self.stage.models[agent]
+        m.look(0.0, 0.0, 5.0)
+        m.react(mood, 5.0)
+        self._cut(agent, 2.2, 0.0)
+        for _ in range(int(0.8 * self.fps)):  # let the expression settle
+            self.t += 1.0 / self.fps
+            self.stage._tick()
+        return self._compose(bubbles=False)
+
     def _consider_thumbnail(self, moment: str | None, mood: str | None = None) -> None:
         score = {"dinesh_catches": 5, "gilfoyle_catches": 5, "disagreement": 4, "own_goal": 4, "both_wrong": 3,
                  "concession": 3}.get(moment or "", 1)
