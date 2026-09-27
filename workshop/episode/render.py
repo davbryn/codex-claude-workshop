@@ -8,6 +8,7 @@ placed on the soundtrack exactly where the mouths move.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 import wave
@@ -163,6 +164,9 @@ class EpisodeRenderer:
               to_camera: bool = False) -> float:
         """Queue a line; returns its duration. The bubble shows ``text``; the voice says a cleaned version."""
         spoken = clean_for_speech(text)
+        if shouted(spoken):  # CAPS on screen, but the voice shouldn't spell it out letter by letter
+            spoken = re.sub(r"\b[A-Z]{2,}(?:'[A-Z]+)?\b", lambda m: m.group(0).capitalize(), spoken)
+            mood = mood if mood in ("outraged", "disagreeing", "annoyed") else "outraged"
         samples, env = self.voices.say(agent, spoken, mood=mood, to_camera=to_camera)
         duration = max(len(samples) / SAMPLE_RATE, len(env) / 100.0, 0.8)
         start = self.t + delay
@@ -658,3 +662,9 @@ def _paint_title(p: QPainter, size: tuple[int, int], age: float, title: str, sub
         p.drawText(QRectF(w * 0.12, h * 0.84, w * 0.76, h * 0.1),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap), disclaimer)
     p.restore()
+
+
+def shouted(text: str) -> bool:
+    """Is a stretch of this line in capitals (Dinesh losing it)?"""
+    caps = re.findall(r"\b[A-Z]{2,}\b", text)
+    return sum(len(w) for w in caps if w not in ("OK", "UTF", "CLI", "API", "JSON", "README", "SQL", "ID", "URL")) >= 6

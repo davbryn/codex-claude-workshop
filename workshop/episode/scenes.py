@@ -43,17 +43,40 @@ THE CHARACTERS
 - They hold each other in mutual contempt that is, very secretly, respect. Jared (management) is offscreen: they
   can mention him or his kanban board, he never speaks.
 
+THIS IS BANTER, NOT A REPORT
+They are two coworkers who can't stand each other, trapped at adjacent desks. Every line is aimed AT the other guy:
+an attack, a defence, a comeback, a one-up. Nobody explains, summarises or narrates what they are doing. The tech is
+the ammunition, not the subject: the real bug is what they hit each other with.
+
+  REPORT (never):  "He's going to test for off-by-one errors in the cache."
+  BANTER (always): "This jackass keeps submitting spaces, not tabs. For Christ's sake. DINESH. STOP BEING AN ASS."
+
+  REPORT (never):  DINESH: "Your validator lets the same day in twice."
+  BANTER (always): DINESH: "You let the same day in TWICE. Your validator is a bouncer with no eyes."
+                   GILFOYLE: "And it still turned you away."
+
+  REPORT (never):  GILFOYLE: "I found an issue with the date parsing."
+  BANTER (always): GILFOYLE: "Your date parser accepted February 30th. That's not a date. That's a cry for help."
+                   DINESH: "It's lenient parsing, it's a feature!"
+                   GILFOYLE: "So is scurvy."
+  (These examples are about other sessions. Write about THIS one.)
+
 HOW TO MAKE IT FUNNY
-- Every scene: setup, escalation, button. End scenes on the laugh, then get out.
-- Short lines. Most under 60 characters. Rapid back-and-forth beats monologues.
-- A silent reaction close-up after a punchline IS a joke (Gilfoyle's stare, Dinesh's face falling). Use them.
-- Talking-head confessionals ("to": "camera"), documentary style, for what a character really thinks. At most one per scene.
-- When a bug is caught, SHOW the real exhibit and highlight the guilty line, then cut to the guilty face.
-- Make every stake obvious to someone who can't code: say what broke in human terms ("one coffee emoji and it dies"),
-  never the jargon, unless the jargon is the joke.
-- Be specific: jokes about exactly what happened in this session, not generic insults.
+- Answer the last line. Each line is a direct response to the one before it: interrupt, twist it, throw it back.
+- Escalate. Each exchange gets pettier and more personal until someone lands the kill shot, then cut.
+- Say the specific real thing (the actual input, value, file, error) inside the insult. Specific is funny; vague is not.
+- Swear like the show when it helps the rhythm: ass, jackass, dick, damn, hell, shit, "Jesus Christ". No slurs, no
+  attacks on real people, nothing about race or religion beyond Gilfoyle's LaVeyan Satanism.
+- SHOUTING IN CAPS is allowed for Dinesh losing it, sparingly.
+- Short. Most lines under 60 characters. An interrupted line can end with "—" and the next one cuts in.
+- A silent reaction close-up after a kill shot IS a joke (Gilfoyle's dead stare, Dinesh's face falling). Use them.
+- Confessionals ("to": "camera") only when the character says something he'd never say to the other guy's face,
+  and it must be a joke. Never use one to explain the plot.
+- When a bug is caught, SHOW the real exhibit with the guilty line highlighted, then cut to the guilty face.
 - Establish a running gag early and pay it off in the last scene.
-- Never repeat a joke shape (e.g. "you were right") more than once. Vary who wins.
+- NEVER REPEAT. No line, fact or joke appears twice. The cold open is not re-told later: the story scenes pick up
+  from before it or after it. A caption never restates the line before it. No "you were right" more than once.
+- Vary who wins. Gilfoyle is not always right; Dinesh occasionally lands one and is then immediately punished.
 
 TRUTH RULES (strict)
 - Everything that happens must be in the fact sheet. No invented bugs, numbers, file names, test counts or outcomes.
@@ -86,6 +109,9 @@ THE FACT SHEET
 TABLE_READ = """You are {me} (the {agent} agent) at the table read for a comedy episode in the style of HBO's Silicon Valley,
 written from a real coding session you took part in with {other}. Below is the script. Rewrite ONLY {me}'s lines
 (ids marked {tag}) to be funnier and more {me}: {voice}.
+This is BANTER, not a report: every line is aimed at {other}, answers the line before it, and uses the real
+technical detail as ammunition (the actual input, file, error), never as an explanation. Swearing like the show
+(ass, jackass, dick, damn, hell, shit) is fine when it helps the rhythm; no slurs.
 - Keep each line's job in the scene (the setup stays a setup, the button stays a button) and keep it short;
   a line may not grow by more than a few words. Shorter is usually funnier.
 - Don't invent facts: no new numbers, file names, bugs or events beyond what the script and facts say.
@@ -122,12 +148,32 @@ def _exhibit_text(e: dict) -> str:
     return str(e.get("line") or e.get("command") or "")
 
 
+_STOP = {"the", "a", "an", "and", "or", "to", "of", "it", "is", "in", "on", "that", "this", "you", "your", "i", "my",
+         "he", "his", "me", "we", "for", "was", "with", "be", "just", "so", "but", "not", "no", "yes", "oh"}
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _STOP and len(w) > 2}
+
+
+def _repeats(line: str, said: list[set[str]], threshold: float = 0.6) -> str | None:
+    """Why ``line`` is a rerun of something already said, or None."""
+    words = _words(line)
+    if len(words) < 2:
+        return None
+    for earlier in said:
+        if earlier and len(words & earlier) / len(words) >= threshold:
+            return "repeats an earlier line"
+    return None
+
+
 def validate(script: dict, events: list[dict], log: list[str] | None = None) -> dict | None:
     """A clean script (bad shots dropped, lines fact-checked), or None if nothing usable is left."""
     log = log if log is not None else []
     known = exhibits(events)
     record = corpus(events)
     scenes = []
+    said: list[set[str]] = []
     for sc in script.get("scenes", []) if isinstance(script, dict) else []:
         shots = []
         for shot in sc.get("shots", []) if isinstance(sc, dict) else []:
@@ -137,10 +183,11 @@ def validate(script: dict, events: list[dict], log: list[str] | None = None) -> 
                 who, line = _who(shot.get("say")), " ".join(str(shot.get("line", "")).split())
                 if not who or not line:
                     continue
-                problem = check_line(line, "", "line", record, limit=MAX_LINE)
+                problem = check_line(line, "", "line", record, limit=MAX_LINE) or _repeats(line, said)
                 if problem:
                     log.append(f"cut draft line ({problem}): {CHARACTER[who]}: {line}")
                     continue
+                said.append(_words(line))
                 mood = shot.get("mood") if shot.get("mood") in MOODS else None
                 shots.append({"say": who, "line": line, "mood": mood,
                               "to": "camera" if shot.get("to") == "camera" else "other",
@@ -175,7 +222,7 @@ def validate(script: dict, events: list[dict], log: list[str] | None = None) -> 
                 shots.append({"sting": shot["sting"]})
             elif "caption" in shot:
                 text = " ".join(str(shot.get("caption", "")).split())[:34]
-                if text and not check_line(text, "", "aside", record, limit=34):
+                if text and not check_line(text, "", "aside", record, limit=34) and not _repeats(text, said[-2:], 0.5):
                     shots.append({"caption": text})
         if any("say" in s for s in shots):
             scenes.append({"name": str(sc.get("name", ""))[:60], "shots": shots})

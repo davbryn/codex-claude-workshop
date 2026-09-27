@@ -225,3 +225,20 @@ def test_voice_timing_helpers():
     assert delivery("Claude", "outraged", False)[0] > 1.1 and delivery("Codex", "stare", False)[0] < 1.0
     x = np.concatenate([np.zeros(24000), np.full(100, 0.5, np.float32), np.zeros(24000)])
     assert len(trim_silence(x)) < 2000
+
+
+def test_validate_cuts_reruns_and_shouting_is_detected():
+    from workshop.episode.render import shouted
+
+    script = {"scenes": [
+        {"name": "a", "shots": [{"say": "Dinesh", "line": "One coffee emoji. The entire app. Dead."},
+                                {"say": "Gilfoyle", "line": "Pity."}]},
+        {"name": "b", "shots": [{"say": "Dinesh", "line": "One coffee emoji and the entire app is dead!"},
+                                {"say": "Gilfoyle", "line": "You said that."},
+                                {"caption": "COFFEE EMOJI KILLED THE APP"}]},
+    ]}
+    s = validate(script, _events())
+    assert [x["line"] for x in s["scenes"][1]["shots"] if "say" in x] == ["You said that."]
+    assert not any("caption" in x for x in s["scenes"][1]["shots"])
+    assert shouted("For Christ's sake. DINESH. STOP BEING AN ASS.")
+    assert not shouted("The CLI reads JSON as UTF-8")
