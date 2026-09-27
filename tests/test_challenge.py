@@ -75,3 +75,10 @@ def test_report_text():
     assert "clean" in c.report([], [])
     text = c.report([c.Violation("no_loops", "a.py", 3, "for x in y:")], [])
     assert "1 violation" in text and "a.py:3" in text
+
+
+def test_reaction_prompt_lists_every_spin():
+    spins = c.spin_all(random.Random(2), project=True)
+    text = c.reaction_prompt("Codex", spins)
+    assert "skill level for Dinesh" in text and "the language" in text and "the project" in text
+    assert text.count("\n1. ") == 1 and "5. " in text
