@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from .capture import EPISODE_DIR, read_events
-from .plan import plan_verbatim
+from .plan import plan_cut
 
 PARODY_NOTE = ("A fan homage to HBO's Silicon Valley; not affiliated with or endorsed by HBO or anyone involved "
                "with the show. Gilfoyle is played by OpenAI Codex, Dinesh by Anthropic Claude Code.")
@@ -24,16 +24,30 @@ def episode_dir(project_dir: Path) -> Path:
     return Path(project_dir) / EPISODE_DIR
 
 
-def make_plan(project_dir: Path, progress=print) -> dict:
-    events = read_events(episode_dir(project_dir) / "events.jsonl")
+def make_plan(project_dir: Path, progress=print, writers: bool = False, settings=None,
+              target_seconds: float = 210.0) -> dict:
+    """The cut; with ``writers`` each agent then punches up its own character's lines (real CLI calls)."""
+    out = episode_dir(project_dir)
+    events = read_events(out / "events.jsonl")
     if not any(e["kind"] == "entry" for e in events):
         raise RuntimeError("no agent turns were captured for this project; nothing to cut")
-    plan = plan_verbatim(events)
-    progress(f"plan: {len(plan['scenes'])} scenes from {len(events)} logged events")
+    plan = plan_cut(events, target_seconds=target_seconds)
+    progress(f"plan: {len(plan['scenes'])} scenes from {len(events)} logged events "
+             f"(about {plan['estimated_seconds'] / 60:.1f} min)")
+    if writers:
+        from ..agents import make_adapters
+        from .writers import punch_up
+
+        if settings is None:
+            from ..config import Settings
+
+            settings = Settings.load()
+        plan = punch_up(plan, events, make_adapters(settings, fake=False), progress=progress, log_dir=out)
     return plan
 
 
-def build_episode(project_dir: Path, progress=print, plan: dict | None = None, settings=None) -> Path:
+def build_episode(project_dir: Path, progress=print, plan: dict | None = None, settings=None,
+                  writers: bool = False) -> Path:
     from PySide6.QtWidgets import QApplication
 
     from .render import EpisodeRenderer
@@ -42,12 +56,12 @@ def build_episode(project_dir: Path, progress=print, plan: dict | None = None, s
         raise RuntimeError("build_episode needs a QApplication")
     out = episode_dir(project_dir)
     events = read_events(out / "events.jsonl")
-    plan = plan or make_plan(project_dir, progress)
-    (out / "script.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
     if settings is None:
         from ..config import Settings
 
         settings = Settings.load()
+    plan = plan or make_plan(project_dir, progress, writers=writers, settings=settings)
+    (out / "script.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
     renderer = EpisodeRenderer(plan, events, settings=settings, progress=progress)
     video = renderer.render(out / "episode.mp4")
     seconds = renderer.frames / renderer.fps

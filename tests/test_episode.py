@@ -1,6 +1,6 @@
 from workshop.episode.build import description, youtube_title
 from workshop.episode.capture import EventLog, read_events
-from workshop.episode.plan import DISCLAIMER_VERBATIM, plan_verbatim, project_title
+from workshop.episode.plan import DISCLAIMER_VERBATIM, plan_cut, plan_verbatim, project_title
 
 BOARD = """# Kanban
 ## To do
@@ -43,7 +43,7 @@ def test_project_title_strips_stamp_and_verb():
 
 def test_verbatim_plan_only_uses_logged_words():
     ev = _events()
-    plan = plan_verbatim(ev)
+    plan = plan_verbatim(ev, target_seconds=600)
     kinds = [s["kind"] for s in plan["scenes"]]
     assert kinds[0] == "title" and kinds[-1] == "finale"
     assert "cutaway" in kinds and "line" in kinds
@@ -54,7 +54,7 @@ def test_verbatim_plan_only_uses_logged_words():
         if spoken and s["kind"] != "card":
             assert spoken.strip("“”…") in logged or all(w in logged for w in spoken.split()[:5])
     screens = [s for s in plan["scenes"] if s["kind"] == "screen"]
-    assert {s["show"]["type"] for s in screens} >= {"board", "diff", "terminal"}
+    assert {s["show"]["type"] for s in screens} >= {"diff", "terminal"}
     assert any(s.get("chapter", "").startswith("Dinesh, turn 1") for s in plan["scenes"])
 
 
@@ -87,3 +87,67 @@ def test_event_log_round_trip_and_ids_continue(tmp_path):
     assert [e["id"] for e in ev] == [0, 1, 2]
     assert ev[1]["content"] == "ünïcode ✓"
     assert ev[2]["t"] >= ev[1]["t"]
+
+
+def test_cut_respects_the_budget_but_keeps_the_dialogue():
+    ev = _events()
+    short = plan_cut(ev, target_seconds=30)
+    kinds = [s["kind"] for s in short["scenes"]]
+    assert "line" in kinds and kinds[-1] == "finale"
+    assert "terminal" in [s["show"]["type"] for s in short["scenes"] if s["kind"] == "screen"]  # failing tests always stay
+    assert len(short["scenes"]) < len(plan_cut(ev, target_seconds=600)["scenes"])
+
+
+# -- writers' room ---------------------------------------------------------------------------
+
+from workshop.episode.writers import check_line, claims, corpus, parse_reply, punch_up, slots_for  # noqa: E402
+
+
+def test_fact_check_rejects_invented_specifics():
+    record = corpus(_events())
+    assert check_line("Gilfoyle's encode(n) returns nothing. Magnificent.", "x", "line", record) is None
+    assert "encode(7)" in check_line("encode(7) exploded.", "x", "line", record)
+    assert "42" in check_line("All 42 tests failed.", "x", "line", record)
+    assert "cache_layer.py" in check_line("He wrote cache_layer.py.", "x", "line", record)
+    assert check_line("", "x", "line", record) == "empty"
+    assert check_line("@Codex your turn", "x", "line", record)
+    assert check_line("x" * 400, "x", "aside", record).startswith("too long")
+    # numbers from the original line are allowed even if the log phrased them differently
+    assert check_line("Four point six. 4.6 times slower.", "It was 4.6x slower", "line", record) is None
+
+
+def test_claims_finds_code_numbers_and_files():
+    found = claims("`short.py` has encode(0) and max_len 7 in camelCase")
+    assert {"short.py", "encode(0)", "max_len", "7", "camelCase"} <= set(found)
+
+
+def test_parse_reply_takes_the_first_json_object():
+    assert parse_reply('Sure!\n{"s4": "Line  one", "s9a": "two"}\nthanks') == {"s4": "Line one", "s9a": "two"}
+    assert parse_reply("no json") == {}
+
+
+def test_each_agent_gets_only_his_own_lines():
+    plan = plan_cut(_events(), target_seconds=600)
+    dinesh = slots_for(plan, "Claude")
+    gilfoyle = slots_for(plan, "Codex")
+    assert dinesh and all(plan["scenes"][s["scene"]].get("speaker", plan["scenes"][s["scene"]].get("agent")) == "Claude"
+                          or plan["scenes"][s["scene"]].get("aside", {}).get("speaker") == "Claude" for s in dinesh)
+    assert [s["kind"] for s in gilfoyle] == ["cutaway"]
+
+
+def test_punch_up_applies_checked_lines_and_labels_the_episode(monkeypatch):
+    import workshop.episode.writers as writers
+
+    ev = _events()
+    plan = plan_cut(ev, target_seconds=600)
+    line_slot = next(s for s in slots_for(plan, "Claude") if s["kind"] == "line")
+    replies = {"Claude": '{"%s": "Gilfoyle, find nothing wrong with encode(n). I dare you."}' % line_slot["id"],
+               "Codex": '{"%s": "Cc HR. And the 99 lawyers."}' % slots_for(plan, "Codex")[0]["id"]}
+    monkeypatch.setattr(writers, "_run", lambda adapter, agent, prompt, tmp, t: (lambda: replies[agent]))
+    out = punch_up(plan, ev, {"Codex": object(), "Claude": object()}, progress=lambda *_: None)
+    scene = out["scenes"][line_slot["scene"]]
+    assert scene["text"].startswith("Gilfoyle, find nothing") and scene["original_text"] and scene["rewritten_by"] == "Claude"
+    cut = next(s for s in out["scenes"] if s["kind"] == "cutaway")
+    assert cut["text"] == "Cc HR."  # "99" isn't in the record: rejected, original kept
+    assert out["disclaimer"].startswith("Dramatised")
+    assert plan["disclaimer"] == DISCLAIMER_VERBATIM  # the input plan is untouched

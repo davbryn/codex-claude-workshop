@@ -115,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     # every run is recorded, so any session can be cut into an episode later
     window._capture = SessionCapture(orchestrator, side_bits=window.director._bits, drive_bits=False, parent=window)
     if args.episode:
-        _build_episode_on_complete(app, orchestrator, setup.project_dir, quit_after=False)
+        _build_episode_on_complete(app, orchestrator, setup.project_dir, quit_after=False,
+                                   writers=not args.fake_agents)
     from workshop.watchdog import FreezeWatchdog
 
     # If the window ever stops responding, record exactly where (see .workshop/logs/freeze-*.log).
@@ -187,7 +188,8 @@ def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Setti
 
     orchestrator.state_changed.connect(on_state)
     if args.episode:
-        _build_episode_on_complete(app, orchestrator, orchestrator.project_dir, quit_after=True, say=say)
+        _build_episode_on_complete(app, orchestrator, orchestrator.project_dir, quit_after=True, say=say,
+                                   writers=not args.fake_agents)
     else:
         orchestrator.state_changed.connect(lambda s: QTimer.singleShot(1500, app.quit) if s == orch.COMPLETE else None)
     say(f"headless workshop in {orchestrator.project_dir}")
@@ -200,7 +202,7 @@ def _run_headless(app: QApplication, orchestrator: Orchestrator, settings: Setti
 
 
 def _build_episode_on_complete(app: QApplication, orchestrator: Orchestrator, project: Path, quit_after: bool,
-                               say=print) -> None:
+                               say=print, writers: bool = True) -> None:
     from PySide6.QtCore import QTimer
 
     from workshop import orchestrator as orch
@@ -210,7 +212,8 @@ def _build_episode_on_complete(app: QApplication, orchestrator: Orchestrator, pr
 
         say("cutting the episode…")
         try:
-            out = build_episode(project, progress=say)
+            # the writers' room makes real CLI calls; fake-agent sessions keep their scripted lines
+            out = build_episode(project, progress=say, writers=writers)
             say(f"episode ready: {out}")
         except Exception as exc:  # the workshop itself succeeded; the edit failing shouldn't hide that
             say(f"episode build failed: {exc}")
