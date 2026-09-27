@@ -24,6 +24,10 @@ WORKAROUND = re.compile(
     r"the rules?|the wheel|conjur\w*|smuggl\w*|abus\w*)\b", re.I)
 
 
+DULL = re.compile(r"\b(?:no (?:new|additional|further) [\w ]{0,40}?(?:was|were) (?:needed|necessary|required)|remains? "
+                  r"(?:intact|the|unchanged)|straight-line code)\b", re.I)
+
+
 def spins_of(events: list[dict]) -> list[dict]:
     return [e for e in events if e["kind"] == "spin"]
 
@@ -41,7 +45,10 @@ def headline(events: list[dict]) -> dict:
     project, _brief = project_title(events)
     project = project.split("\n")[0]
     if ("project", None) in by:
-        project = by[("project", None)]["label"]
+        from ..challenge import PROJECTS
+
+        spun = by[("project", None)]
+        project = next((label for label, brief in PROJECTS if brief == spun.get("rule")), spun["label"])
     lang = by.get(("language", None), {}).get("label", "")
     limit = by.get(("limit", None), {}).get("label", "")
     return {"project": project, "language": lang.split(",")[0], "limit": limit,
@@ -53,7 +60,7 @@ def workaround_lines(entry: dict, limit: int = 150) -> list[str]:
     out = []
     for s in sentences(strip_markdown(entry.get("content", ""))):
         s = " ".join(s.replace("`", "").split()).lstrip("-* ")
-        if WORKAROUND.search(s) and 25 <= len(s) <= limit:
+        if WORKAROUND.search(s) and 25 <= len(s) <= limit and not DULL.search(s):
             out.append(s)
     # punchy first: short, about the rule itself, and the kind of sentence the bubble scorer likes
     rule_words = re.compile(r"\b(loop|if|digit|vowel|import|rhyme|caps|lines?|rule|wheel|cheat\w*|legal\w*)\b", re.I)
@@ -92,9 +99,12 @@ def plan_challenge(events: list[dict], project_dir: Path | None = None) -> dict:
                 tests_so_far = f"{e.get('passed') or 0} ✓" if e.get("ok") else f"{e.get('failed') or '?'} ✗"
         diffs = sorted((e for e in evs if e["kind"] == "diff" and diff_size(e) > 0), key=diff_size, reverse=True)
         tricks = workaround_lines(entry) if entry else []
+        asides = sorted((e for e in evs if e["kind"] == "aside" and e["agent"] == agent),
+                        key=lambda e: -score_sentence(e["text"]))
         if diffs:
+            best = asides[0] if asides else None
             scenes.append({"kind": "screen", "agent": agent, "show": {"type": "diff", "events": [diffs[0]["id"]]},
-                           "aside": None, "meanwhile": next((e["id"] for e in evs if e["kind"] == "bit"), None)})
+                           "aside": {"speaker": agent, "text": best["text"], "event": best["id"]} if best else None, "meanwhile": next((e["id"] for e in evs if e["kind"] == "bit"), None)})
         if tricks:  # the workaround, explained by the guy who did it, to camera
             scenes.append({"kind": "confessional", "speaker": agent, "text": tricks[0], "label": "THE WORKAROUND"})
         fails = [e for e in evs if e["kind"] == "tests" and not e.get("ok")]
