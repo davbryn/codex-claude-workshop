@@ -420,6 +420,8 @@ def reaction_prompt(agent: str, spins: list[Spin]) -> str:
     other = "Claude" if agent == "Codex" else "Codex"
     rows = []
     for i, s in enumerate(spins, 1):
-        what = f"skill level for {CHARACTER[s.who]}" if s.wheel == "skill" else             {"language": "the language", "limit": "the limitation", "project": "the project"}[s.wheel]
+        what = f"skill level for {CHARACTER[s.who]}" if s.wheel == "skill" else {
+            "language": "the language", "limit": "the limitation", "project": "the project",
+            "twist": "THE TWIST WHEEL, spun halfway through the build"}[s.wheel]
         rows.append(f"{i}. {what}: {s.slice.label} ({s.slice.rule})")
     return REACTION_PROMPT.format(me=CHARACTER[agent], agent=agent, other=CHARACTER[other], results="\n".join(rows))

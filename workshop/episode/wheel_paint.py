@@ -56,7 +56,8 @@ def paint_wheel(p: QPainter, size: tuple[int, int], spin: dict, angle: float, la
     p.setFont(_font(h * 0.055, bold=True, family="Bahnschrift"))
     p.setPen(QColor("#f2c94c"))
     p.drawText(QRectF(0, h * 0.03, w, h * 0.08), Qt.AlignmentFlag.AlignCenter, title)
-    cx, cy, r = w / 2, h * 0.53, h * 0.34
+    cx, cy, r = w / 2, h * 0.53, min(h * 0.34, w * 0.44)
+    p.save()
     p.translate(cx, cy)
     p.rotate(angle)
     step = 360.0 / n
@@ -83,7 +84,7 @@ def paint_wheel(p: QPainter, size: tuple[int, int], spin: dict, angle: float, la
     p.setBrush(QColor("#111111"))
     p.setPen(QPen(QColor("#f2c94c"), 4))
     p.drawEllipse(QPointF(0, 0), r * 0.12, r * 0.12)
-    p.resetTransform()
+    p.restore()
     p.setPen(QPen(QColor("#f2c94c"), 6))
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawEllipse(QPointF(cx, cy), r + 3, r + 3)

@@ -207,3 +207,9 @@ def test_viral_titles():
     plan["headline"]["twist"] = "Klingon Mode"
     assert youtube_title(plan).endswith("Then the Wheel Added Klingon Mode")
     assert "#shorts" in short_title(plan)
+
+
+def test_reaction_prompt_handles_the_twist():
+    spins = c.spin_all(random.Random(2))
+    twist = c.spin_twist(spins, random.Random(3))
+    assert "TWIST WHEEL" in c.reaction_prompt("Claude", [twist])

@@ -152,8 +152,8 @@ class EpisodeRenderer:
         p.resetTransform()
         for b, kind in saved:
             b.kind = kind
-        if self.subtitle is not None and self.cam is not None:
-            paint_subtitle(p, self.size, *self.subtitle)
+        if self.subtitle is not None and self.cam is not None and not self.vertical:
+            paint_subtitle(p, self.size, *self.subtitle)  # (Shorts caption every line underneath instead)
         if self.hud is not None:
             paint_hud(p, self.size, self.hud)
         if self.overlay is not None:
@@ -178,7 +178,8 @@ class EpisodeRenderer:
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         saying = self.saying if self.saying and self.t <= self.saying[2] else None
-        paint_short_frame(p, (self.pipe_w, self.pipe_h), frame, self.plan, saying)
+        wheel = getattr(self, "_wheel_now", None) if self.overlay is not None else None
+        paint_short_frame(p, (self.pipe_w, self.pipe_h), frame, self.plan, saying, wheel)
         p.end()
         return canvas
 
@@ -628,7 +629,9 @@ class EpisodeRenderer:
         def overlay(p, t):
             age = t - start
             angle, under = wheel_angle(spin, age, duration)
-            paint_wheel(p, self.size, spin, angle, (age - duration) if age >= duration else None, title)
+            landed = (age - duration) if age >= duration else None
+            self._wheel_now = (spin, angle, landed, title)  # Shorts draw the wheel full-size instead
+            paint_wheel(p, self.size, spin, angle, landed, title)
 
         self.overlay = overlay
         self.sfx("whir", 0.6)
@@ -643,6 +646,7 @@ class EpisodeRenderer:
         self.sfx("blast" if spin["wheel"] in ("language", "limit") else "chime", 0.8)
         self.advance(1.2 if scene.get("short") else 1.8 + min(1.6, len(result.get("rule", "")) / 110))
         self.overlay = None
+        self._wheel_now = None
         # their faces, as it sinks in
         for i, line in enumerate(scene.get("reactions", [])):
             who = line["speaker"]

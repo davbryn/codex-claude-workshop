@@ -47,7 +47,7 @@ def _outlined(p: QPainter, rect: QRectF, text: str, px: float, fill: str, family
 
 
 def paint_short_frame(p: QPainter, size: tuple[int, int], frame: QImage, plan: dict,
-                      saying: tuple[str, str, float] | None) -> None:
+                      saying: tuple[str, str, float] | None, wheel: tuple | None = None) -> None:
     w, h = size
     bg = QLinearGradient(0, 0, 0, h)
     bg.setColorAt(0, QColor("#1b1030"))
@@ -58,6 +58,17 @@ def paint_short_frame(p: QPainter, size: tuple[int, int], frame: QImage, plan: d
     _outlined(p, QRectF(30, 150, w - 60, 190), top, 88, "#ffffff")
     if rule:
         _outlined(p, QRectF(30, 330, w - 60, 150), rule, 104, "#f2c94c")
+    if wheel is not None:  # the wheel, full width: it's the star of the Short
+        from .wheel_paint import paint_wheel
+
+        spin, angle, landed, title = wheel
+        p.save()
+        p.translate(0, 470)
+        p.setClipRect(QRectF(0, 0, w, 1330))
+        paint_wheel(p, (w, 1330), spin, angle, landed, title)
+        p.restore()
+        _outlined(p, QRectF(30, 150, w - 60, 190), short_headline(plan)[0], 88, "#ffffff")
+        return
     pic_h = w * frame.height() / max(1, frame.width())
     pic = QRectF(0, 540, w, pic_h)
     p.drawImage(pic, frame)
