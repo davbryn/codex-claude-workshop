@@ -238,6 +238,30 @@ is verbatim: every spoken word is something an agent actually wrote. Published e
 are a fan homage to HBO's *Silicon Valley*; the description says so, and says it isn't
 affiliated with the show.
 
+**Wheel of Destiny.** `--challenge` (or the checkbox on the setup screen) turns a workshop into
+a game show. Before the build the wheel is spun: a skill level for each agent (Intern on day one,
+10x Rockstar Ninja, Retired COBOL Wizard, Friday at 4:55pm…), the language (only ones that can run
+here: Python, PowerShell, Perl, Bash, awk, JScript, VBScript, Windows Batch, F#) and a limitation
+(no loops, no ifs, no digits, no vowels in names, 40 columns, rhyming comments, ALL-CAPS strings,
+100 lines total, no imports). Leave the prompt empty and the wheel picks the project too. After
+the first round the **Twist Wheel** spins: a second limitation, one of Jared's mandatory feature
+requests (put it on the blockchain, Klingon mode, a mascot, an easter egg…) or a skill swap.
+
+Each agent's own CLI reacts to every spin in character. A referee puts the rules and the latest
+rules check into every turn's prompt and checks the code after every turn, so getting caught and
+working around the rules are real events.
+
+```
+python app.py --headless --challenge --episode --project C:\dev\wheel-3
+```
+
+A challenge session is cut as its own format. It opens cold on the best real line, then shows the
+spins and reactions and the rules card. The build is a montage with a status bar and a music bed,
+stopping for RULE VIOLATION and PLOT TWIST klaxons (with the offending line), workarounds explained
+by whoever pulled them off, and real bug catches. It closes on the demo from DEMO.md and the
+verdict. Alongside episode.mp4 you get a vertical Short (`episode_short.mp4`, under a minute), a
+wheel-and-face thumbnail, and titles for both. Every spoken word is the agents' own.
+
 **Theatre Mode** (F11) hides the header, dashboard and diagnostics and gives the stage
 most of the window, which is handy on a second monitor.
 
