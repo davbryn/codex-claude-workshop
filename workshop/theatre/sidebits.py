@@ -14,6 +14,7 @@ conversation.md or the orchestration, cost a little usage, and are capped per tu
 from __future__ import annotations
 
 import json
+import time
 
 import tempfile
 from pathlib import Path
@@ -87,6 +88,17 @@ class SideBits(QObject):
         self.timeout_s = timeout_s
         self._procs: dict[str, QProcess] = {}
         self._tmp = Path(tempfile.mkdtemp(prefix="workshop-sidebits-"))
+        self.log_dir: Path | None = None  # e.g. <project>/.workshop/logs: every call and its outcome
+
+    def _log(self, agent: str, message: str) -> None:
+        if self.log_dir is None:
+            return
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            with (self.log_dir / "meanwhile.log").open("a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {agent}: {message}\n")
+        except OSError:
+            pass
 
     def busy(self, agent: str) -> bool:
         return agent in self._procs
@@ -99,7 +111,8 @@ class SideBits(QObject):
             return False
         try:
             exe = adapter.resolve_executable()
-        except Exception:
+        except Exception as exc:
+            self._log(agent, f"not started: {exc}")
             return False
         prompt = build_prompt(agent, context, recent)
         out_file = self._tmp / f"{agent.lower()}-bit.txt"
@@ -133,7 +146,9 @@ class SideBits(QObject):
         proc.start()
         if not proc.waitForStarted(5000):
             self._procs.pop(agent, None)
+            self._log(agent, "not started: the CLI did not launch")
             return False
+        self._log(agent, "requested")
         proc.write(prompt.encode("utf-8"))
         proc.closeWriteChannel()
         return True
@@ -144,9 +159,14 @@ class SideBits(QObject):
         if agent == "Codex" and out_file.exists():
             text = out_file.read_text(encoding="utf-8", errors="replace")
         bit = parse_bit(text)
+        code = proc.exitCode()
         proc.deleteLater()
         if bit:
+            self._log(agent, f"ok (exit {code}): {json.dumps(bit, ensure_ascii=False)}")
             self.ready.emit(agent, bit)
+        else:
+            snippet = " ".join(text.split())[:300]
+            self._log(agent, f"no usable reply (exit {code}): {snippet or '(empty)'}")
 
     def shutdown(self) -> None:
         for proc in list(self._procs.values()):

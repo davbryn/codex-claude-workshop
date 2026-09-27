@@ -141,3 +141,14 @@ def test_the_idle_one_gets_his_own_bit_and_line(qapp, tmp_path):
     d._on_bit("Codex", {"kind": "note", "title": "x", "body": "y", "line": "z"})  # the worker: ignored
     assert d.screens["Codex"].mode != "bit"
     d.shutdown()
+
+
+def test_mangled_em_dash_from_windows_tools_still_parses():
+    board = parse("## Done\n- Implement converter (Gilfoyle) ? \"Pytest has yet to enter the building.\"\n")
+    card = board.columns["Done"][0]
+    assert (card.title, card.owner, card.aside) == ("Implement converter", "Gilfoyle", "Pytest has yet to enter the building.")
+
+
+def test_html_entities_in_asides_are_decoded():
+    board = parse("## Asides\n- Dinesh: `md2html.py doc.md &gt; doc.html` crashed on a checkmark.\n")
+    assert board.asides == [("Dinesh", "md2html.py doc.md > doc.html crashed on a checkmark.")]

@@ -137,6 +137,7 @@ class Director(QObject):
         self._demo = demo_auto_reply is not None
         self._bits = SideBits(adapters, self)
         self._bits.ready.connect(self._on_bit)
+        self._bits.log_dir = orchestrator.project_dir / ".workshop" / "logs"
         self._bits_this_turn = 0
         self._next_bit_at = float("inf")
         self._recent_kinds: dict[str, list[str]] = {a: [] for a in AGENTS}

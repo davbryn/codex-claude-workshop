@@ -18,6 +18,7 @@ the protocol and the source of truth.
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +31,7 @@ _COLUMN_ALIASES = {
     "done": "Done", "complete": "Done", "completed": "Done",
 }
 _CARD = re.compile(r"^\s*[-*+]\s+(?:\[[ xX]\]\s*)?(?P<body>.+?)\s*$")
-_ASIDE_QUOTE = re.compile(r"\s+[—–-]{1,2}\s+[\"“](?P<aside>.+?)[\"”]\s*$")
+_ASIDE_QUOTE = re.compile(r"\s+(?:[—–-]{1,2}|\?|â€”)\s+[\"“](?P<aside>.+?)[\"”]\s*$")
 _OWNER = re.compile(r"\s*\((?P<owner>[^()]{1,40})\)\s*$")
 _ASIDE_LINE = re.compile(r"^\s*[-*+]\s+(?P<name>[A-Za-z][\w .'-]{0,30}?)\s*:\s+(?P<text>.+?)\s*$")
 
@@ -109,7 +110,9 @@ def parse(text: str) -> Board:
 
 
 def _clean(text: str) -> str:
-    return re.sub(r"\s+", " ", text.replace("**", "").replace("`", "")).strip().strip("\"“”")[:200]
+    # agents sometimes write "&gt;" for ">" in Markdown: show and speak the character, not the entity
+    text = html.unescape(text.replace("**", "").replace("`", ""))
+    return re.sub(r"\s+", " ", text).strip().strip("\"“”")[:200]
 
 
 def read_board(project_dir: Path) -> Board | None:
@@ -178,9 +181,10 @@ def prompt_block(me: str, other: str, me_name: str, other_name: str) -> str:
 Management has given you both a shared kanban board: {KANBAN_FILE} in the project root. The humans watch it
 live, and your asides on it are read aloud while you work. (You are free to have opinions about this.)
 - FIRST, before other work this turn: move (or add) the card(s) you're about to do into "## Doing", with your
-  name as owner and a one-line in-character aside, like: `- Split the word lists ({me_name}) — "aside"`
-- As you finish: move them to "## Done" with a short aside. Add cards to "## To do" for work you think remains
-  (owner optional).
+  name as owner and a one-line in-character aside, like: `- Split the word lists ({me_name}) - "aside"`
+  (plain ASCII hyphen before the quote; write the file as UTF-8).
+- As you finish: move them to "## Done" with a short aside. Moving a card means deleting its line from the old
+  column, not copying it. Add cards to "## To do" for work you think remains (owner optional).
 - Optionally, while working (e.g. after a test run), append up to two lines under "## Asides" as
   `- {me_name}: your aside`.
 - Asides: one line, under 120 characters, in character, and true to what is actually happening. Only write
