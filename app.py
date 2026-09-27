@@ -104,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
     window = MainWindow(orchestrator, settings, fake_agents=args.fake_agents, demo=args.demo,
                         demo_auto_reply=demo_auto_reply, pace=True)
     window.show()
+    from workshop.watchdog import FreezeWatchdog
+
+    # If the window ever stops responding, record exactly where (see .workshop/logs/freeze-*.log).
+    watchdog = FreezeWatchdog(setup.project_dir / ".workshop" / "logs", parent=window)
+    app.aboutToQuit.connect(watchdog.stop)
     if args.record:
         _start_recording(app, window, orchestrator, Path(args.record))
     orchestrator.start()
