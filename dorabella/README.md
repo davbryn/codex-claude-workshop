@@ -43,6 +43,24 @@ python -m dorabella.discs --rings 2 1 3 --step 1 0 0 encode "london"
 `--rings` says which ring each disc sits on, and `--step` turns each disc
 after every letter.
 
+## Trying the discs on the Dorabella cipher
+
+```bash
+python -m dorabella.analyse        # needs numpy
+```
+
+`analyse.py` holds a transcription of the 1897 cipher. The 87 symbols are
+labelled A–U by glyph identity (the usual isomorph transcription, checked
+symbol by symbol against the original). Each label was then given a sector and
+arc count by eye. The script decodes the cipher under all 3,072 fixed settings
+and all 1,572,864 stepping settings, and ranks the results with English letter
+trigrams from Newton's *Opticks* (`english_trigrams.txt`).
+
+First result: no setting reads as English. Every fixed disc setting is a
+simple substitution, so it cannot beat the best simple substitution, and that
+is gibberish too. The stepping settings depend on how each glyph's
+orientation was read, so edit `GLYPHS` if you read a symbol differently.
+
 ## Tests
 
 ```bash
