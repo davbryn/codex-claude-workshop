@@ -90,8 +90,31 @@ numbers are in RESULTS.md. "Prior work" means the extensive Cairn analysis
 | a shared transcription error: two glyphs merged, one split, one deleted or inserted, the line-3 dot | no rescue |
 | word-based solver (dictionary segmentation) | strings of 2–3-letter words |
 | direction-only reading under Elgar's letter groups (80,640 layouts) | gibberish; arbitrary groups untestable |
+| directions as a melody (80,640 pitch mappings, folk and hymn tune models) | fits better than shuffles, but only as much as any structured source; no tune |
+| 8-letter alphabets (German note names A–H, ETAOINSH…), semaphore pairs, Morse or Wilkins triliteral on the arcs, Bacon biliteral | no signal |
+| glyph types as nulls, Schooling's sliding card at the dot, skip and line-order readings, autokey (all primers), rail fence | no signal |
 | published solutions (Packwood 2020, Belanger 2022, Roberts 2013, Henderson 2011) | not consistent with any fixed key, or 88 letters long |
 | prior work: Elgar's 1924 key geometry (483,840 keys), columnar and local transposition, keyword-mixed keys | exhausted |
+
+## What is left
+
+These cannot be tested on 87 symbols, or not without an outside source:
+
+- a pair code with an unknown table;
+- an arbitrary letter grouping of the directions;
+- two interleaved alphabets;
+- a running key, book code or nomenclator;
+- an anagram;
+- a misreading that all three readers share.
+
+What could still move this is new material rather than more searching:
+
+- more ciphertext in the same system. The 18-symbol 1886 Liszt fragment is the only
+  other known sample, and it is too short alone.
+- an 1897 key, draft or explanation among Elgar's or the Penny family's papers.
+
+A better image of the plate is unlikely to help. The prior work found that 3× resolution
+changed nothing, and an independent remeasurement here agreed with the consensus.
 
 ## Files
 

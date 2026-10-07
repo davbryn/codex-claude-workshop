@@ -105,7 +105,34 @@ every time. Every reader agrees on all 18 directions.
   would be 26% of the text. That happens in about 5 of every 100,000 English windows,
   and at most 1–3% in any European language tested.
 
-## 5. Published solutions
+## 5. If the directions carry the message
+
+The motif suggests the direction stream may carry the message. These families read only
+the directions, or the arcs as a separate channel:
+
+| family | positive control | Dorabella | verdict |
+| --- | --- | --- | --- |
+| melody: direction = scale degree (80,640 mappings), n-gram models from 12,079 folk/hymn/chorale tunes | 52/52 held-out tunes and 76% of Elgar-melody windows at p < 0.01 | 2.64 bits/note, z +5.0 against shuffles; drops to p 0.010 with the motif and opposed-pair count held fixed | not specific: non-melodic sources with as much pair structure fit as well; best mapping changes with model order; no known tune; arcs-as-rhythm fits badly (p ~ 5e-9) |
+| 8-letter alphabets: German note names A–H, ETAOINSH, ETAOINSR, any searched set | ≥ 0.95 recovery | family-wise p 0.03–0.05, gone with the motif held fixed (0.31); 10–11 sd below real text | no signal |
+| two-flag semaphore (pairs of directions) | 0.97 | gibberish, p 0.15 against pair-preserving shuffles | no signal |
+| Morse on the arcs (dot / dash / gap) | 1.00 valid | valid groups 0.857, shuffles 0.871 | no signal |
+| Wilkins' triliteral on the arcs (87 = 3 × 29), natural order | 1.00 | p 0.31 | no signal; any-key triliteral untestable |
+| Bacon's biliteral on any two-colouring of directions or arcs (5,200 decodes) | 0.94 | p 0.90 | no signal |
+| whole glyph types as nulls (221 sets) | 0.88 | gain p 0.93 | no signal |
+| Schooling's sliding card (No. 19), slid at the line-3 dot | slide found 20/20 | best slide is none | no signal |
+| skip, decimation, line-order and boustrophedon readings | English band | gain p 1.00 | no signal |
+| ciphertext and plaintext autokey (all primers) over Elgar's 24-glyph ring or the 8-direction dial; rail fence 2–6 rails (113 members) | 18/18 recovered (0.93–1.00) | best member is plain substitution itself (−4.795): gain 0, against +0.20 ± 0.10 for decoys (every one of 26 gains) | no signal |
+
+The motif copy at 59 runs from the end of line 2 into line 3. Any reading that does not
+take line 2 straight into line 3 would make that copy a coincidence, so the motif
+supports the ordinary reading order.
+
+**Untested, because they cannot be tested on 87 symbols or without a source:** a pair
+code with an unknown table; two interleaved alphabets; an arbitrary letter grouping of
+the directions; any-key triliteral; book, dictionary or nomenclator codes; anagrams;
+running keys; a misreading that all three readers share.
+
+## 6. Published solutions
 
 | claim | check against the consensus |
 | --- | --- |
@@ -114,7 +141,7 @@ every time. Every reader agrees on all 18 directions.
 | Roberts 2013; Henderson 2011 | 88 letters as published, so they do not align with 87 glyphs |
 | Sams 1970 | about 109 letters for 87 glyphs, with phonetic expansion and Greek letters; not testable as a key |
 
-## 6. Elgar's notebook page
+## 7. Elgar's notebook page
 
 Decoded independently with the plain key and confirmed against published readings:
 MARCO ELGAR, A VERY OLD CYPHER (round and square glyphs), DO YOU GO TO LONDON. Across
