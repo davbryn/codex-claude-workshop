@@ -4,8 +4,9 @@ Each model ("family") finds its best-scoring English reading of the cipher.  Wit
 letters, any flexible enough model will find something English-flavoured, so every
 family is also run on decoys: the same 87 symbols shuffled into a random order, which
 keeps the symbol counts but destroys any message.  A family only shows a signal if the
-real cipher beats every decoy by a clear margin.  `selftest` checks the other direction:
-each family must crack an 87-letter English message enciphered with a random key.
+real cipher beats every decoy by a clear margin, and it only counts as a decipherment if
+the plaintext also scores like real text (READS_AS_LANGUAGE).  `selftest` checks the other
+direction: each family must crack an 87-letter English message enciphered with a random key.
 
 Families
     elgar-key      Elgar's printed alphabet, read directly
@@ -164,6 +165,11 @@ def best_reading(family: str, glyphs, settings) -> Candidate:
 
 # -- the verdict ----------------------------------------------------------------------------
 
+# Real 87-letter text scores about -4.0 to -4.2 under its own model (sd about 0.15), so a
+# decipherment has to reach roughly this; beating the decoys alone only shows the order isn't random.
+READS_AS_LANGUAGE = -4.5
+
+
 @dataclass
 class Verdict:
     best: Candidate
@@ -180,7 +186,16 @@ class Verdict:
 
     @property
     def signal(self) -> bool:
+        """Beats every decoy clearly: the symbol order means something under this family."""
         return self.best.score > max(self.decoys) and self.z > 3
+
+    @property
+    def verdict(self) -> str:
+        if not self.signal:
+            return "no signal"
+        if self.best.score >= READS_AS_LANGUAGE:
+            return "**reads as language**"
+        return "order structure, not a decipherment"
 
 
 def solve(glyphs, families, n_decoys: int, settings: Settings, log=print) -> list[Verdict]:
@@ -209,7 +224,7 @@ def report(verdicts: list[Verdict], n_symbols: int, language: str = "english") -
     for v in verdicts:
         d = np.array(v.decoys)
         lines.append(f"| {v.best.family} | {v.best.score:.2f} | {d.mean():.2f} / {d.max():.2f} | "
-                     f"{v.margin:+.2f} | {v.z:+.1f} | {'**signal**' if v.signal else 'no signal'} |")
+                     f"{v.margin:+.2f} | {v.z:+.1f} | {v.verdict} |")
     lines.append("")
     for v in verdicts:
         lines += [f"**{v.best.family}** ({v.best.reading}), {v.best.score:.2f}: `{v.best.plaintext}`",

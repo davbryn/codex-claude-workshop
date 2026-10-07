@@ -3,7 +3,7 @@ import unittest
 from dorabella import structure
 from dorabella.discs import ALPHABET, DiscSet, Glyph
 from dorabella.scoring import LANGUAGES, calibration, model, score_text
-from dorabella.solver import Settings, disc_decrypt, selftest
+from dorabella.solver import Candidate, Settings, Verdict, disc_decrypt, selftest
 from dorabella.transcription import CIPHER, LINE_LENGTHS, NOTEBOOK, TRANSCRIPTIONS
 
 
@@ -54,6 +54,12 @@ class Solver(unittest.TestCase):
             for rot in ((0, 0, 0), (3, 1, 7)):
                 text = "".join(ALPHABET[i] for i in rows[rot[0] * 64 + rot[1] * 8 + rot[2]])
                 self.assertEqual(text, DiscSet(list(rot), list(ring_of), list(step)).decode(CIPHER))
+
+    def test_beating_decoys_is_not_a_decipherment_unless_it_reads_as_language(self):
+        decoys = [-5.1, -5.0, -5.2, -5.05]
+        self.assertEqual(Verdict(Candidate("f", "", "", "", -4.8), decoys).verdict, "order structure, not a decipherment")
+        self.assertEqual(Verdict(Candidate("f", "", "", "", -4.1), decoys).verdict, "**reads as language**")
+        self.assertEqual(Verdict(Candidate("f", "", "", "", -5.08), decoys).verdict, "no signal")
 
     def test_every_family_cracks_an_87_letter_message(self):
         results = selftest(Settings(restarts=8, iterations=15000), log=lambda *a: None)
