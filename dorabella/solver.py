@@ -12,12 +12,13 @@ Families
     discs          the three-disc model: every rotation and disc order (3,072 fixed keys)
     discs-step     the discs also turn a fixed amount after every letter (1,572,864 settings)
     periodic       Elgar's alphabet then a Vigenère or Beaufort key of period 1-8
-    substitution   any one-to-one symbol -> letter key (simulated annealing)
+    substitution   any one-to-one symbol -> letter key (simulated annealing in C, engine.py)
 Each family is tried on the symbols read forwards and backwards.
 
-    python -m dorabella.solver                 # full run, about 4 minutes
-    python -m dorabella.solver --quick         # fewer decoys and annealing restarts
-    python -m dorabella.solver --family periodic --family substitution
+    python -m dorabella.solver                 # consensus transcription, English, about 2 minutes
+    python -m dorabella.solver --quick         # fewer decoys
+    python -m dorabella.solver --family substitution --language latin
+    python -m dorabella.solver --transcription schmeh
     python -m dorabella.solver --glyphs "W2 E3 NW2 ..."   # your own transcription
     python -m dorabella.solver selftest
 """
@@ -30,9 +31,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import engine
 from .discs import ALPHABET, DISCS, Glyph
-from .scoring import N, QUAD, calibration, quad_index, score, to_text, SAMPLE
-from .transcription import CIPHER
+from .scoring import LANGUAGES, N, SAMPLE, calibration, model, score, to_text
+from .transcription import TRANSCRIPTIONS
 
 DISC_IDX = np.array([[ALPHABET.index(c) for c in letters] for letters in DISCS])
 ROTATIONS = np.array(list(itertools.product(range(8), repeat=3)))
@@ -50,9 +52,14 @@ class Candidate:
 
 @dataclass
 class Settings:
-    restarts: int = 10
+    restarts: int = 20
     iterations: int = 20000
     seed: int = 1
+    language: str = "english"
+
+    @property
+    def table(self) -> np.ndarray:
+        return model(self.language)
 
 
 # -- families: each takes a glyph list and returns its best Candidate ---------------------
@@ -66,12 +73,12 @@ def disc_decrypt(glyphs: list[Glyph], ring_of, step=(0, 0, 0)) -> np.ndarray:
     return DISC_IDX[discs, (sectors - turned) % 8]
 
 
-def _best_disc(glyphs, steps, family) -> Candidate:
+def _best_disc(glyphs, steps, family, table) -> Candidate:
     best = (-np.inf, None)
     for step in steps:
         for order in ORDERS:
             idx = disc_decrypt(glyphs, order, step)
-            s = score(idx)
+            s = score(idx, table)
             k = int(s.argmax())
             if s[k] > best[0]:
                 best = (float(s[k]), (tuple(ROTATIONS[k]), order, step, idx[k]))
@@ -84,15 +91,15 @@ def _best_disc(glyphs, steps, family) -> Candidate:
 
 def elgar_key(glyphs, settings) -> Candidate:
     idx = disc_decrypt(glyphs, (0, 1, 2))[0]
-    return Candidate("elgar-key", "", "Elgar's printed key", to_text(idx), float(score(idx)))
+    return Candidate("elgar-key", "", "Elgar's printed key", to_text(idx), float(score(idx, settings.table)))
 
 
 def discs(glyphs, settings) -> Candidate:
-    return _best_disc(glyphs, [(0, 0, 0)], "discs")
+    return _best_disc(glyphs, [(0, 0, 0)], "discs", settings.table)
 
 
 def discs_step(glyphs, settings) -> Candidate:
-    return _best_disc(glyphs, itertools.product(range(8), repeat=3), "discs-step")
+    return _best_disc(glyphs, itertools.product(range(8), repeat=3), "discs-step", settings.table)
 
 
 def periodic(glyphs, settings) -> Candidate:
@@ -102,7 +109,6 @@ def periodic(glyphs, settings) -> Candidate:
     n, rng, best = len(base), np.random.default_rng(settings.seed), (-np.inf, None)
     for variant, period in itertools.product(("vigenere", "beaufort"), range(1, 9)):
         cols = np.arange(n) % period
-        sign = 1 if variant == "beaufort" else -1
 
         def plain(key):
             return (key[cols] - base) % N if variant == "beaufort" else (base - key[cols]) % N
@@ -110,7 +116,7 @@ def periodic(glyphs, settings) -> Candidate:
         if period <= 3:   # exhaustive
             keys = np.array(list(itertools.product(range(N), repeat=period)))
             idx = (keys[:, cols] - base) % N if variant == "beaufort" else (base - keys[:, cols]) % N
-            s = score(idx)
+            s = score(idx, settings.table)
             k = int(s.argmax())
             found = (float(s[k]), keys[k])
         else:   # coordinate ascent with restarts
@@ -122,8 +128,8 @@ def periodic(glyphs, settings) -> Candidate:
                         trial = np.repeat(key[None], N, 0)
                         trial[:, c] = np.arange(N)
                         idx = (trial[:, cols] - base) % N if variant == "beaufort" else (base - trial[:, cols]) % N
-                        key = trial[int(score(idx).argmax())]
-                s = float(score(plain(key)))
+                        key = trial[int(score(idx, settings.table).argmax())]
+                s = float(score(plain(key), settings.table))
                 if s > found[0]:
                     found = (s, key)
         if found[0] > best[0]:
@@ -132,47 +138,13 @@ def periodic(glyphs, settings) -> Candidate:
     return Candidate("periodic", "", f"{variant}, key {to_text(key)} (period {len(key)})", to_text(idx), s)
 
 
-def anneal(symbols: np.ndarray, n_symbols: int, settings: Settings, rng) -> tuple[float, np.ndarray]:
-    """Simulated annealing over one-to-one symbol -> letter keys; returns (mean score, key)."""
-    best = (-np.inf, None)
-    m = len(symbols) - 3
-    for _ in range(settings.restarts):
-        key = rng.permutation(N)[:n_symbols]
-        cur = QUAD[quad_index(key[symbols])].sum()
-        run_best = (cur, key.copy())
-        temps = np.geomspace(20.0, 0.5, settings.iterations)
-        moves_i = rng.integers(0, n_symbols, settings.iterations)
-        moves_j = rng.integers(0, N, settings.iterations)
-        coins = rng.random(settings.iterations)
-        for it in range(settings.iterations):
-            i, j = moves_i[it], moves_j[it]
-            old = key[i]
-            if old == j:
-                continue
-            other = np.flatnonzero(key == j)
-            key[i] = j
-            if other.size:
-                key[other[0]] = old
-            new = QUAD[quad_index(key[symbols])].sum()
-            if new >= cur or coins[it] < np.exp((new - cur) / temps[it]):
-                cur = new
-            else:
-                key[i] = old
-                if other.size:
-                    key[other[0]] = j
-            if cur > run_best[0]:
-                run_best = (cur, key.copy())
-        if run_best[0] / m > best[0]:
-            best = (float(run_best[0] / m), run_best[1])
-    return best
-
-
 def substitution(glyphs, settings) -> Candidate:
     labels = sorted({str(g) for g in glyphs})
     symbols = np.array([labels.index(str(g)) for g in glyphs])
-    s, key = anneal(symbols, len(labels), settings, np.random.default_rng(settings.seed))
-    pairs = ", ".join(f"{lab}={ALPHABET[k]}" for lab, k in zip(labels, key))
-    return Candidate("substitution", "", pairs, to_text(key[symbols]), s)
+    sol = engine.anneal(symbols, len(labels), model=settings.table, restarts=settings.restarts,
+                        iterations=settings.iterations, seed=settings.seed)
+    pairs = ", ".join(f"{lab}={ALPHABET[k]}" for lab, k in zip(labels, sol.key))
+    return Candidate("substitution", "", pairs, sol.plain, sol.score)
 
 
 FAMILIES = {"elgar-key": elgar_key, "discs": discs, "discs-step": discs_step,
@@ -224,12 +196,16 @@ def solve(glyphs, families, n_decoys: int, settings: Settings, log=print) -> lis
     return verdicts
 
 
-def report(verdicts: list[Verdict], n_symbols: int) -> str:
-    cal = calibration(n_symbols)
-    lines = [f"Scores are mean quadgram log10-probability. For {n_symbols} letters: real English "
-             f"{cal['english']:.2f}, the same letters shuffled {cal['shuffled']:.2f}.", "",
-             "| family | best | decoys (mean / best) | margin | z | verdict |",
-             "| --- | --- | --- | --- | --- | --- |"]
+def report(verdicts: list[Verdict], n_symbols: int, language: str = "english") -> str:
+    if language == "english":
+        cal = calibration(n_symbols)
+        lines = [f"Scores are mean quadgram log10-probability. For {n_symbols} letters: real English "
+                 f"{cal['english']:.2f}, the same letters shuffled {cal['shuffled']:.2f}.", ""]
+    else:
+        lines = [f"Scores are mean quadgram log10-probability under the {language} model "
+                 f"(87 letters of real {language} score about -4.0).", ""]
+    lines += ["| family | best | decoys (mean / best) | margin | z | verdict |",
+              "| --- | --- | --- | --- | --- | --- |"]
     for v in verdicts:
         d = np.array(v.decoys)
         lines.append(f"| {v.best.family} | {v.best.score:.2f} | {d.mean():.2f} / {d.max():.2f} | "
@@ -273,19 +249,23 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--family", action="append", choices=list(FAMILIES), help="run only these (repeatable)")
     p.add_argument("--decoys", type=int, default=10)
     p.add_argument("--quick", action="store_true", help="3 decoys, fewer annealing restarts")
-    p.add_argument("--glyphs", help="space-separated glyph tokens to solve instead of the stored transcription")
+    p.add_argument("--transcription", choices=list(TRANSCRIPTIONS), default="consensus")
+    p.add_argument("--glyphs", help="space-separated glyph tokens to solve instead of a stored transcription")
+    p.add_argument("--language", choices=LANGUAGES, default="english", help="plaintext language model")
     p.add_argument("--report", help="also write the markdown report to this file")
     args = p.parse_args(argv)
-    settings = Settings(restarts=6, iterations=12000) if args.quick else Settings()
+    settings = Settings(restarts=8, iterations=15000) if args.quick else Settings()
+    settings.language = args.language
 
     if args.command == "selftest":
         print("Cracking an 87-letter English message enciphered with a random key:")
         selftest(settings)
         return
-    glyphs = [Glyph.parse(t) for t in args.glyphs.split()] if args.glyphs else CIPHER
+    glyphs = [Glyph.parse(t) for t in args.glyphs.split()] if args.glyphs else TRANSCRIPTIONS[args.transcription]
+    source = "your glyphs" if args.glyphs else f"the {args.transcription} transcription"
     n_decoys = 3 if args.quick and args.decoys == 10 else args.decoys
-    print(f"Solving {len(glyphs)} symbols against {n_decoys} shuffled decoys:")
-    text = report(solve(glyphs, args.family or list(FAMILIES), n_decoys, settings), len(glyphs))
+    print(f"Solving {len(glyphs)} symbols ({source}, {args.language}) against {n_decoys} shuffled decoys:")
+    text = report(solve(glyphs, args.family or list(FAMILIES), n_decoys, settings), len(glyphs), args.language)
     print("\n" + text)
     if args.report:
         with open(args.report, "w") as f:

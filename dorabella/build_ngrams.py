@@ -17,7 +17,7 @@ from .discs import normalise
 PROSE = ["austen-emma", "austen-persuasion", "austen-sense", "bryant-stories", "burgess-busterbrown",
          "carroll-alice", "chesterton-ball", "chesterton-brown", "chesterton-thursday",
          "edgeworth-parents", "melville-moby_dick"]
-OUT = Path(__file__).with_name("english_quadgrams.txt.gz")
+OUT = Path(__file__).with_name("models") / "english_quadgrams.txt.gz"
 
 
 def main(zip_path: str) -> None:

@@ -287,7 +287,7 @@ function cipherGlyphs() {
   return toks.map(parse);
 }
 document.getElementById("decode").addEventListener("click", () => { const g = cipherGlyphs(); if (g) out.textContent = decode(S, g); });
-const DORABELLA = "W2 E3 NW2 W3 W1 N2 S1 W3 NE1 W2 NW3 SE2 SE1 NW1 SE2 N3 SE2 SE2 N2 E3 E3 SE2 N1 S1 SW2 S1 N1 NW3 SE3 S1 SE2 S1 N2 SW1 W3 NE1 E2 SW3 NW2 SE2 SE2 NW2 N2 N1 SE1 S1 SE2 NW3 SE2 N2 S2 SE3 SE1 NW1 SW1 NE1 NE1 SW1 NW3 SE3 NW2 SE3 N2 S3 SE3 NW2 NW1 S3 S3 N1 SE3 NW2 SE2 N2 S3 SE1 SE3 N1 W3 E3 N1 SE3 N2 W3 NW1 W1 W3";
+const DORABELLA = "W2 E3 NW2 W3 W1 N2 S1 W3 NE1 SW2 NW3 SE2 SE1 NW1 SE2 N3 SE2 SE2 N2 E3 E3 SE2 NW1 SW1 SW2 SW1 N1 NW3 SE3 S1 SE2 S1 N2 SW1 W3 NE1 NE2 W3 NW2 SE2 SE2 NW2 N2 N1 SE1 S1 SE2 NW3 SE2 N2 S2 SE3 SE1 NW1 SW1 NE1 NE1 SW1 NW3 SE3 NW2 SE3 N2 S2 SE3 NW2 NW1 S2 S3 N1 SE3 NW2 SE2 N2 S2 SE1 SE3 N1 W3 E3 N1 SE3 N2 W3 NW1 SW1 W3";
 const LONDON = "NW1 E2 SW2 E2 S2 N1 E2 S1 E2 NE2 E2 E1 NW1 E2 E1";
 document.getElementById("london").addEventListener("click", () => { document.getElementById("cipher").value = LONDON; out.textContent = decode(S, LONDON.split(" ").map(parse)); });
 document.getElementById("dorabella").addEventListener("click", () => { document.getElementById("cipher").value = DORABELLA; out.textContent = decode(S, DORABELLA.split(" ").map(parse)); });
