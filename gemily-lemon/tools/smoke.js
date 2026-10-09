@@ -1,0 +1,23 @@
+const { chromium } = require('/opt/node-tools/node_modules/playwright');
+(async () => {
+  const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const page = await (await b.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true })).newPage();
+  const errs = []; page.on('pageerror', e => errs.push(e.message + (e.stack||'').split('\n')[1])); page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+  await page.goto('file:///home/user/codex-claude-workshop/gemily-lemon/index.html');
+  await page.waitForTimeout(800);
+  await page.evaluate(() => window.__game.startLevel(6));
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => { const g = window.__game; g.world.shots = g.par + 3; g.doMega(); });
+  await page.waitForTimeout(1800); await page.screenshot({ path: '/tmp/claude-0/shots/boss-mega.png' });
+  await page.waitForTimeout(16000);
+  console.log('errs-so-far', errs); console.log('after mega', await page.evaluate(() => [window.__game.phase, window.__game.world.fruitCount()]));
+  await page.screenshot({ path: '/tmp/claude-0/shots/boss-clear.png' });
+  await page.click('#clMenu', { force: true }); await page.waitForTimeout(600); await page.screenshot({ path: '/tmp/claude-0/shots/levels.png' });
+  await page.evaluate(() => window.__game.startLevel(3)); await page.waitForTimeout(1200);
+  await page.evaluate(() => { const g = window.__game; g.world.fruits().forEach((f, i) => { if (i) f.hp = 1; }); const f = g.world.fruits()[0]; g.doZest(f); });
+  await page.waitForTimeout(14000);
+  await page.screenshot({ path: '/tmp/claude-0/shots/slot.png' });
+  console.log('phase', await page.evaluate(() => window.__game.phase));
+  console.log('errors', errs);
+  await b.close();
+})();

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#1c0a3d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Gemily Lemon's Last Stand</title>
+<style>
+:root{
+  --bg0:#2b0f55; --bg1:#0c1a4d; --accent:#c46bd0;
+  --ink:#2a0f3a; --paper:#fffdf5; --pink:#ff3d8b; --yellow:#ffe35a; --mint:#3ee6ac; --blue:#4db8ff;
+  --font:"Arial Rounded MT Bold","Trebuchet MS","Segoe UI",Verdana,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --paper:#fffdf5; } }
+:root[data-theme="dark"]{ --paper:#fffdf5; }
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
+html,body{margin:0;height:100%;background:#12082b;color:#fff;font-family:var(--font);overflow:hidden;overscroll-behavior:none}
+[hidden]{display:none!important}
+button{font-family:inherit;border:0;color:inherit;cursor:pointer;touch-action:manipulation}
+#app{position:relative;width:100%;max-width:560px;height:100vh;height:100dvh;margin:0 auto;overflow:hidden;background:linear-gradient(160deg,var(--bg0),var(--bg1));transition:background .6s}
+#bgfx{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.blob{position:absolute;border-radius:50%;filter:blur(6px);opacity:.28;animation:drift 14s ease-in-out infinite alternate}
+.blob:nth-child(1){width:300px;height:300px;left:-80px;top:8%;background:#ff3d8b}
+.blob:nth-child(2){width:260px;height:260px;right:-70px;top:38%;background:#4db8ff;animation-duration:18s}
+.blob:nth-child(3){width:340px;height:340px;left:10%;bottom:-120px;background:#ffe35a;opacity:.18;animation-duration:22s}
+.blob:nth-child(4){width:160px;height:160px;right:12%;top:-40px;background:#3ee6ac;animation-duration:12s}
+@keyframes drift{to{transform:translate(40px,-60px) scale(1.15)}}
+
+/* ---------- HUD */
+#top{position:absolute;z-index:6;top:0;left:0;right:0;height:58px;display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top) + 8px) 12px 0;height:calc(58px + env(safe-area-inset-top))}
+.ic{width:42px;height:42px;border-radius:14px;background:rgba(255,255,255,.14);border:2px solid rgba(255,255,255,.35);font-size:18px;display:grid;place-items:center;backdrop-filter:blur(4px);transition:transform .1s}
+.ic:active{transform:scale(.9)}
+.topc{flex:1;text-align:center;line-height:1.05}
+#lvlName{font-size:20px;letter-spacing:.06em;text-shadow:0 2px 0 var(--ink),0 0 12px rgba(255,255,255,.35)}
+#worldName{font-size:12px;opacity:.8;letter-spacing:.04em}
+#scoreBox{min-width:92px;text-align:right;line-height:1}
+#score{font-size:22px;color:var(--yellow);text-shadow:0 2px 0 var(--ink)}
+#scoreBox small{display:block;font-size:9px;letter-spacing:.2em;opacity:.7;margin-top:2px}
+#subbar{position:absolute;z-index:6;left:0;right:0;top:calc(58px + env(safe-area-inset-top));height:38px;display:flex;align-items:center;justify-content:center;gap:10px;padding:0 12px}
+.pill{background:rgba(0,0,0,.28);border:2px solid rgba(255,255,255,.22);border-radius:99px;padding:4px 12px;font-size:14px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.pill b{color:var(--yellow);font-size:16px}
+#starsBox{display:flex;gap:2px;font-size:26px;line-height:1}
+#starsBox i{font-style:normal;color:rgba(255,255,255,.2);text-shadow:0 2px 0 rgba(0,0,0,.4);transition:all .25s}
+#starsBox i.on{color:var(--yellow);text-shadow:0 2px 0 #b8741a,0 0 12px rgba(255,227,90,.8)}
+#stage{position:absolute;z-index:2;touch-action:none;border-radius:20px;box-shadow:0 14px 40px rgba(0,0,0,.55),0 0 0 3px rgba(255,255,255,.1)}
+#stage canvas{display:block;width:100%;height:100%;border-radius:20px}
+#stage.zesting{cursor:crosshair;box-shadow:0 0 0 4px var(--pink),0 0 40px rgba(255,61,139,.7)}
+#combo{position:absolute;left:50%;top:7%;transform:translate(-50%,0) scale(.4);font-size:54px;color:var(--yellow);text-shadow:0 4px 0 var(--ink),0 0 24px rgba(255,200,0,.8);-webkit-text-stroke:2px var(--ink);opacity:0;pointer-events:none;transition:all .15s}
+#combo.on{opacity:1;transform:translate(-50%,0) scale(1);animation:cpulse .4s infinite alternate}
+@keyframes cpulse{to{transform:translate(-50%,0) scale(1.18) rotate(-3deg)}}
+
+/* ---------- bottom: Gemily + bubble + powerups */
+#bottom{position:absolute;z-index:6;left:0;right:0;bottom:0;height:clamp(150px,22vh,215px);display:flex;align-items:flex-end;padding:0 10px calc(env(safe-area-inset-bottom) + 8px) 0;pointer-events:none}
+#bottom>*{pointer-events:auto}
+#gemBox{flex:0 0 auto;width:clamp(120px,36vw,190px);align-self:flex-end;margin-left:-4px;filter:drop-shadow(0 6px 10px rgba(0,0,0,.4))}
+#bubbleCol{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:8px;min-width:0;height:100%;padding-bottom:6px}
+#bubble{position:relative;background:var(--paper);color:var(--ink);border:3px solid var(--ink);border-radius:18px;padding:9px 12px;font-size:14px;line-height:1.25;font-weight:800;min-height:56px;display:flex;align-items:center;box-shadow:0 5px 0 rgba(0,0,0,.35);opacity:0;transform:translateY(10px) scale(.96);transform-origin:0 100%;transition:all .22s cubic-bezier(.3,1.6,.5,1);margin-bottom:2px}
+#bubble.show{opacity:1;transform:none}
+#bubble::before{content:"";position:absolute;left:-14px;bottom:16px;border:9px solid transparent;border-right:14px solid var(--ink);border-left:0}
+#bubble::after{content:"";position:absolute;left:-9px;bottom:18px;border:7px solid transparent;border-right:11px solid var(--paper);border-left:0}
+#bubble.show:empty{opacity:0}
+#power{display:flex;gap:10px;align-items:center;justify-content:flex-end}
+.pw{position:relative;width:56px;height:56px;border-radius:18px;font-size:26px;display:grid;place-items:center;background:linear-gradient(#ffe35a,#ffb21f);box-shadow:0 5px 0 #a8590c,0 8px 14px rgba(0,0,0,.35);border:3px solid var(--ink);transition:transform .1s,filter .2s}
+.pw:active{transform:translateY(4px);box-shadow:0 1px 0 #a8590c}
+.pw:disabled{filter:grayscale(.9) brightness(.7);opacity:.7}
+.pw i{position:absolute;right:-6px;top:-8px;min-width:24px;height:24px;border-radius:12px;background:var(--pink);color:#fff;font-size:13px;font-style:normal;display:grid;place-items:center;border:2px solid var(--ink)}
+#btnZest{background:linear-gradient(#ff7ab8,#ff3d8b);box-shadow:0 5px 0 #8c1048,0 8px 14px rgba(0,0,0,.35)}
+#btnZest.active{animation:pulse .5s infinite alternate}
+#btnMega{height:56px;padding:0 14px;border-radius:18px;font-size:15px;letter-spacing:.04em;background:linear-gradient(#b46bff,#ff3d8b);border:3px solid var(--ink);box-shadow:0 5px 0 #4b1086,0 0 24px rgba(255,61,139,.8);animation:pulse .6s infinite alternate;color:#fff;text-shadow:0 2px 0 var(--ink)}
+@keyframes pulse{to{transform:scale(1.08)}}
+
+/* ---------- screens */
+.screen{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;opacity:0;transition:opacity .35s;pointer-events:none}
+.screen.open{opacity:1;pointer-events:auto}
+.btn{position:relative;font-size:20px;letter-spacing:.06em;padding:14px 26px;border-radius:20px;background:linear-gradient(#5ef2b9,#1fc489);color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.35);border:3px solid var(--ink);box-shadow:0 6px 0 #0d7752,0 12px 20px rgba(0,0,0,.35);transition:transform .08s}
+.btn:active{transform:translateY(5px);box-shadow:0 1px 0 #0d7752}
+.btn.big{font-size:30px;padding:18px 34px;background:linear-gradient(#ffe35a,#ffa21f);box-shadow:0 8px 0 #a8590c,0 14px 24px rgba(0,0,0,.4);animation:bob 1.4s ease-in-out infinite;color:var(--ink);text-shadow:0 2px 0 rgba(255,255,255,.55)}
+.btn.big:active{box-shadow:0 2px 0 #a8590c}
+.btn.pink{background:linear-gradient(#ff7ab8,#ff3d8b);box-shadow:0 6px 0 #8c1048,0 12px 20px rgba(0,0,0,.35)}
+.btn.blue{background:linear-gradient(#7fd2ff,#2f8fe0);box-shadow:0 6px 0 #144f8c,0 12px 20px rgba(0,0,0,.35)}
+.btn.small{font-size:15px;padding:10px 16px;border-radius:16px}
+@keyframes bob{50%{transform:translateY(-6px) scale(1.03)}}
+
+#sTitle{background:radial-gradient(120% 60% at 50% 38%,transparent 30%,rgba(10,2,30,.55) 100%),linear-gradient(180deg,rgba(14,3,40,.7),transparent 30%,transparent 55%,rgba(14,3,40,.85))}
+.logo{margin-top:calc(env(safe-area-inset-top) + 26px);text-align:center;line-height:.9;transform:rotate(-3deg);animation:logo 3s ease-in-out infinite;filter:drop-shadow(0 10px 0 rgba(0,0,0,.25))}
+@keyframes logo{50%{transform:rotate(-1deg) scale(1.03)}}
+.logo span{display:block;font-weight:900;-webkit-text-stroke:7px var(--ink);paint-order:stroke fill;text-shadow:0 5px 0 var(--ink)}
+.logo .l1{font-size:min(19vw,104px);color:#ffd21f;-webkit-text-stroke:10px var(--ink);letter-spacing:.02em}
+.logo .l2{font-size:min(10vw,54px);color:#fff;margin-top:2px;-webkit-text-stroke:6px var(--ink)}
+.logo .l3{font-size:min(11.6vw,64px);color:var(--pink);-webkit-text-stroke:7px var(--ink)}
+#titleGem{position:absolute;left:-8%;bottom:0;width:min(54%,280px);filter:drop-shadow(0 10px 18px rgba(0,0,0,.5))}
+.menu{position:absolute;right:16px;bottom:calc(env(safe-area-inset-bottom) + 28px);display:flex;flex-direction:column;gap:14px;align-items:stretch;width:min(52%,260px)}
+.tag{text-align:center;font-size:13px;opacity:.9;margin:2px 0 0;text-shadow:0 2px 0 var(--ink)}
+
+#sLevels,#sPause,#sClear,#sStory{background:rgba(10,3,30,.82);backdrop-filter:blur(6px)}
+.panel{margin:auto;width:min(92%,440px);background:linear-gradient(#4a2290,#2a1160);border:4px solid var(--ink);border-radius:28px;box-shadow:0 10px 0 rgba(0,0,0,.4),0 0 0 3px rgba(255,255,255,.16) inset,0 30px 60px rgba(0,0,0,.5);padding:20px 18px;text-align:center}
+.panel h2{margin:0 0 4px;font-size:30px;letter-spacing:.05em;color:var(--yellow);text-shadow:0 3px 0 var(--ink);-webkit-text-stroke:1px var(--ink)}
+.panel p{margin:4px 0 12px;opacity:.9}
+.panel .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+#sLevels .panel{height:min(88%,720px);display:flex;flex-direction:column;padding-bottom:14px}
+#lvGrid{flex:1;overflow:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:6px 4px 10px;margin-top:8px;-webkit-overflow-scrolling:touch}
+.lvWorld{grid-column:1/-1;text-align:left;font-size:13px;letter-spacing:.06em;color:var(--mint);margin-top:8px;text-shadow:0 2px 0 var(--ink)}
+.lvBtn{aspect-ratio:1;border-radius:18px;background:linear-gradient(#ffe35a,#ffa21f);border:3px solid var(--ink);box-shadow:0 5px 0 #a8590c;font-size:26px;color:var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;transition:transform .08s}
+.lvBtn:active{transform:translateY(4px);box-shadow:0 1px 0 #a8590c}
+.lvBtn small{font-size:11px;color:#c2570a;letter-spacing:1px;min-height:13px}
+.lvBtn small i{font-style:normal;color:rgba(0,0,0,.2)}
+.lvBtn.boss{background:linear-gradient(#ff9ad0,#ff3d8b);box-shadow:0 5px 0 #8c1048}
+.lvBtn.locked{background:#4a3a78;box-shadow:0 5px 0 #2a1d50;color:rgba(255,255,255,.4)}
+
+#clStars{display:flex;justify-content:center;gap:6px;margin:6px 0 4px}
+#clStars i{font-style:normal;font-size:74px;line-height:1;color:rgba(255,255,255,.18);text-shadow:0 5px 0 rgba(0,0,0,.4);transform:scale(.6)}
+#clStars i:nth-child(2){margin-top:-14px}
+#clStars i.on{color:var(--yellow);text-shadow:0 5px 0 #b8741a,0 0 28px rgba(255,227,90,.9);animation:starpop .6s cubic-bezier(.3,1.8,.5,1) forwards}
+@keyframes starpop{0%{transform:scale(.2) rotate(-40deg)}100%{transform:scale(1) rotate(0)}}
+#clScore{font-size:46px;color:var(--mint);text-shadow:0 4px 0 var(--ink);-webkit-text-stroke:1.5px var(--ink)}
+.sub{font-size:14px;opacity:.85}
+#clearGem{position:absolute;left:-4%;bottom:0;width:min(46%,230px);pointer-events:none;filter:drop-shadow(0 8px 14px rgba(0,0,0,.5))}
+#clBubble{position:absolute;right:14px;bottom:calc(env(safe-area-inset-bottom) + 46px);width:min(56%,270px)}
+#clBubble #bubble{font-size:16px;min-height:64px}
+#sClear .panel{margin-top:12%;position:relative}
+#sClear .panel{margin-bottom:auto}
+
+#sStory .story{margin:auto auto 0;width:100%;position:relative;height:100%;display:flex;flex-direction:column}
+#storyBubble{margin:auto 18px 0 auto;width:min(86%,430px);padding:0 0 12px}
+#storyBubble #bubble{font-size:19px;padding:16px 18px;min-height:130px;transform-origin:20% 100%;opacity:1;transform:none}
+#storyBubble #bubble::before,#storyBubble #bubble::after{left:34px;bottom:-24px;border:12px solid transparent;border-top:18px solid var(--ink);border-bottom:0;border-right:12px solid transparent}
+#storyBubble #bubble::after{left:36px;bottom:-17px;border-top:15px solid var(--paper);border-width:10px 10px 0 10px;border-color:var(--paper) transparent transparent transparent}
+#storyN{font-size:12px;opacity:.7;margin-bottom:6px;letter-spacing:.2em}
+#storyGem{width:min(62%,320px);margin-left:-4%;filter:drop-shadow(0 10px 18px rgba(0,0,0,.5))}
+#storyBtns{position:absolute;right:18px;bottom:calc(env(safe-area-inset-bottom) + 24px);display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+#storyBtn{opacity:.45}
+#storyBtn.ready{opacity:1;animation:bob 1s infinite}
+#storySkip{background:none;font-size:14px;opacity:.7;text-decoration:underline;padding:6px}
+
+#sSlot{position:absolute;inset:0;z-index:30;display:flex;background:rgba(10,3,30,.72);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;pointer-events:none}
+#sSlot.open{opacity:1;pointer-events:auto}
+.slot{margin:auto;width:min(90%,420px);padding:18px;border-radius:30px;background:linear-gradient(#ff5fa8,#b4207a);border:5px solid var(--ink);box-shadow:0 10px 0 #5a0f3f,0 0 60px rgba(255,61,139,.7);text-align:center;transform:scale(.7);transition:transform .4s cubic-bezier(.3,1.7,.5,1)}
+#sSlot.open .slot{transform:scale(1)}
+.slot h3{margin:0 0 10px;font-size:22px;letter-spacing:.08em;color:var(--yellow);text-shadow:0 3px 0 var(--ink)}
+.reels{display:flex;gap:8px;justify-content:center;background:#1a0a30;border-radius:20px;padding:10px;border:4px solid var(--ink);box-shadow:inset 0 0 20px #000}
+.reel{flex:1;aspect-ratio:.9;background:linear-gradient(#fff,#e9e2ff 45%,#fff);border-radius:14px;display:grid;place-items:center;font-size:clamp(44px,15vw,72px);overflow:hidden;border:3px solid var(--ink)}
+.reel.spin span{animation:reelshake .12s infinite}
+.reel.hit{background:linear-gradient(#fff6a8,#ffd21f);animation:starpop .5s}
+@keyframes reelshake{50%{transform:translateY(8px) scale(.94);filter:blur(1.4px)}}
+#slotMsg{margin-top:12px;font-size:24px;min-height:34px;color:#fff;text-shadow:0 3px 0 var(--ink)}
+#slotMsg.win{color:var(--yellow);animation:pulse .4s infinite alternate}
+
+/* ---------- Gemily SVG */
+.gem-wrap{position:relative}
+.gem{width:100%;height:auto;display:block;overflow:visible}
+.mouth{display:none}
+.gem[data-mood="idle"] .m-idle,.gem:not([data-mood="talk"]):not([data-mood="happy"]):not([data-mood="shock"]):not([data-mood="smug"]) .m-idle{display:inline}
+.gem[data-mood="talk"] .m-talk{display:inline}
+.gem[data-mood="happy"] .m-happy{display:inline}
+.gem[data-mood="shock"] .m-shock{display:inline}
+.gem[data-mood="smug"] .m-smug{display:inline}
+.m-talk .talkmouth{transform-box:fill-box;transform-origin:center;animation:talk .2s infinite alternate}
+@keyframes talk{from{transform:scaleY(.35)}to{transform:scaleY(1.15)}}
+.gem-eye{transform-box:fill-box;transform-origin:50% 50%;animation:gblink 4.3s infinite}
+@keyframes gblink{0%,93%,100%{transform:scaleY(1)}95.5%{transform:scaleY(.08)}}
+.gem .iris,.gem .pupil{animation:glook 7s infinite}
+@keyframes glook{0%,35%{transform:translate(0,0)}42%,70%{transform:translate(-3px,1px)}78%,92%{transform:translate(3px,-1px)}100%{transform:translate(0,0)}}
+.gem-head,.gem-hand{transform-origin:122px 176px;animation:gsway 5.5s ease-in-out infinite}
+@keyframes gsway{0%,100%{transform:rotate(-1.6deg) translateY(0)}50%{transform:rotate(1.8deg) translateY(-2px)}}
+.gem-body{animation:gbob 3.2s ease-in-out infinite;transform-origin:122px 300px}
+@keyframes gbob{50%{transform:scaleY(1.012)}}
+.gem[data-mood="happy"] .brow-l,.gem[data-mood="happy"] .brow-r,.gem[data-mood="shock"] .brow-l,.gem[data-mood="shock"] .brow-r{transform:translateY(-5px)}
+.gem[data-mood="smug"] .brow-l{transform:translateY(-3px) rotate(-4deg);transform-box:fill-box}
+.gem-spark{opacity:0}
+.cheer .gem{animation:cheer .45s ease-in-out infinite alternate}
+.cheer .gem-spark{opacity:1;animation:twinkle .5s infinite alternate}
+@keyframes cheer{from{transform:translateY(0) rotate(-1.5deg)}to{transform:translateY(-8px) rotate(1.5deg)}}
+@keyframes twinkle{from{transform:scale(.7);opacity:.5}to{transform:scale(1.15);opacity:1}}
+.gem-spark path{transform-box:fill-box;transform-origin:center}
+
+body[data-phase="title"] #top,body[data-phase="title"] #subbar,body[data-phase="title"] #bottom,body[data-phase="boot"] #top,body[data-phase="boot"] #subbar,body[data-phase="boot"] #bottom{visibility:hidden}
+@media (max-height:640px){ #bubble{font-size:12.5px;min-height:46px} .pw{width:48px;height:48px;font-size:22px} }
+@media (prefers-reduced-motion: reduce){ .blob,.logo,.btn.big{animation:none} }
+</style>
+</head>
+<body data-phase="boot">
+<div id="app">
+  <div id="bgfx"><div class="blob"></div><div class="blob"></div><div class="blob"></div><div class="blob"></div></div>
+
+  <header id="top">
+    <button id="btnPause" class="ic" aria-label="Pause">❚❚</button>
+    <div class="topc"><div id="lvlName">LEVEL 1</div><div id="worldName">The Lounge</div></div>
+    <div id="scoreBox"><span id="score">0</span><small>SCORE</small></div>
+    <button id="btnSnd" class="ic" aria-label="Sound">🔊</button>
+  </header>
+  <div id="subbar">
+    <div class="pill">🍎 <b id="nFruit">0</b></div>
+    <div id="starsBox"><i>★</i><i>★</i><i>★</i></div>
+    <div class="pill">SHOTS <b id="nShots">0</b>/<b id="nPar">0</b></div>
+  </div>
+
+  <div id="stage"><canvas id="gl"></canvas><div id="combo"></div></div>
+
+  <footer id="bottom">
+    <div id="gemBox"></div>
+    <div id="bubbleCol">
+      <div id="bubble"><span id="bubbleText"></span></div>
+      <div id="power">
+        <button id="btnMega" class="pw" hidden>✨ MEGA SQUEEZE</button>
+        <button id="btnHint" class="pw" aria-label="Hint">💡<i id="hintN">3</i></button>
+        <button id="btnZest" class="pw" aria-label="Zest bomb">💣<i id="zestN">1</i></button>
+      </div>
+    </div>
+  </footer>
+
+  <section id="sTitle" class="screen" hidden>
+    <div class="logo"><span class="l1">GEMILY</span><span class="l2">LEMON'S</span><span class="l3">LAST STAND</span></div>
+    <div id="titleGem"></div>
+    <div class="menu">
+      <button id="btnContinue" class="btn big">PLAY</button>
+      <button id="btnLevels" class="btn blue">LEVELS</button>
+      <p class="tag">Pull back. Let go.<br>Pop the Fruit Mafia.</p>
+    </div>
+  </section>
+
+  <section id="sStory" class="screen" hidden>
+    <div class="story">
+      <div id="storyBubble"><div id="storyN"></div></div>
+      <div id="storyGem"><div id="storyGemSlot"></div></div>
+    </div>
+    <div id="storyBtns"><button id="storyBtn" class="btn pink">NEXT ▸</button><button id="storySkip">skip intro</button></div>
+  </section>
+
+  <section id="sLevels" class="screen" hidden>
+    <div class="panel"><h2>CHOOSE LEVEL</h2><div class="sub">Four worlds. Endless levels. One lemon.</div><div id="lvGrid"></div><div class="row"><button id="lvBack" class="btn small pink">◂ BACK</button></div></div>
+  </section>
+
+  <section id="sPause" class="screen" hidden>
+    <div class="panel"><h2>PAUSED</h2><p>Gemily is on a coffee break.</p>
+      <div class="row" style="flex-direction:column;align-items:stretch">
+        <button id="btnResume" class="btn">RESUME</button>
+        <button id="btnRestart" class="btn blue">RESTART LEVEL</button>
+        <button id="btnPLevels" class="btn blue">LEVELS</button>
+        <button id="tgMusic" class="btn small pink">Music: ON</button>
+        <button id="tgSfx" class="btn small pink">Sound FX: ON</button>
+        <button id="btnPHome" class="btn small">HOME</button>
+      </div></div>
+  </section>
+
+  <section id="sClear" class="screen" hidden>
+    <div class="panel">
+      <h2 id="clTitle">TABLE CLEARED!</h2>
+      <div class="sub" id="clLevel"></div>
+      <div id="clStars"><i>★</i><i>★</i><i>★</i></div>
+      <div id="clScore">+0</div>
+      <div class="sub" id="clShots"></div>
+      <div class="sub" id="clBest" style="color:var(--mint);margin-top:2px"></div>
+      <div class="row"><button id="clNext" class="btn big" style="animation:none;font-size:24px">NEXT LEVEL ▸</button></div>
+      <div class="row"><button id="clReplay" class="btn small blue">REPLAY</button><button id="clMenu" class="btn small pink">LEVELS</button></div>
+    </div>
+    <div id="clearGem"></div><div id="clBubble"></div>
+  </section>
+
+  <section id="sSlot" hidden>
+    <div class="slot"><h3 id="slotTitle">LUCKY JUICE SLOTS</h3>
+      <div class="reels"><div class="reel" id="reel0"><span>🍋</span></div><div class="reel" id="reel1"><span>🍋</span></div><div class="reel" id="reel2"><span>🍋</span></div></div>
+      <div id="slotMsg"></div></div>
+  </section>
+</div>
+<!--JS-->
+</body>
+</html>
