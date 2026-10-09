@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Cloud Test Lab</title>
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <p class="eyebrow">Cloud Test Lab</p>
+        <h1>Codex Cloud is alive 🚀</h1>
+      </header>
+
+      <section class="card" aria-labelledby="counter-title">
+        <h2 id="counter-title">Counter</h2>
+        <output id="count" class="count" aria-live="polite">0</output>
+        <div class="row">
+          <button id="dec" type="button" aria-label="Decrease">−1</button>
+          <button id="inc" type="button" class="primary" aria-label="Increase">+1</button>
+          <button id="reset" type="button" class="ghost">Reset</button>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="gen-title">
+        <h2 id="gen-title">Project name generator</h2>
+        <p id="name" class="name" aria-live="polite">Tap the button…</p>
+        <button id="generate" type="button" class="primary wide">Generate thing</button>
+      </section>
+
+      <section class="card" aria-labelledby="anim-title">
+        <h2 id="anim-title">Bouncy thing</h2>
+        <div id="box" class="box"><div id="ball" class="ball"></div></div>
+        <button id="pause" type="button" class="wide" aria-pressed="false">Pause</button>
+      </section>
+
+      <section class="card status" aria-labelledby="status-title">
+        <h2 id="status-title">Status</h2>
+        <dl>
+          <div><dt>Counter</dt><dd id="s-count">0</dd></div>
+          <div><dt>Names generated</dt><dd id="s-names">0</dd></div>
+          <div><dt>Page open for</dt><dd id="s-uptime">0s</dd></div>
+        </dl>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
